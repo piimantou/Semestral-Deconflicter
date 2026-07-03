@@ -53,7 +53,12 @@ course) and get a feel for the tool.
    cross-listed course (e.g. one that satisfies both an "AI Electives" and a
    "Systems Electives" requirement) can be checked into both, and taking it
    once counts toward both targets at the same time rather than needing to
-   be picked twice.
+   be picked twice. Each section's day/time is optionally paired with a
+   **Runs from / Runs through** date range for courses that don't span the
+   whole semester (a short module, a block seminar); leave both blank for a
+   section that meets every week of the semester. Two sections in the same
+   day/time slot but non-overlapping date ranges aren't treated as
+   conflicting, since they'd never actually coincide.
 3. If a required course has multiple sections, pick which one you're
    actually enrolled in from the dropdown on its card. Check any courses you
    want in the **Optional courses** panel regardless of bucket targets. A

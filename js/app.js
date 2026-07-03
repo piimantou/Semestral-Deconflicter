@@ -99,18 +99,23 @@ function courseCardHtml(course) {
     if (!cat) return '';
     return `<span class="type-badge ${MODE_BADGE_CLASS[cat.mode] || ''}">${escapeHtml(cat.name)}</span>`;
   }).join('');
+  const isRequired = courseIsInMode(course, 'required');
+  const activeRequiredSectionId = isRequired ? chosenRequiredSection(course)?.id : null;
   const sectionsHtml = course.sections.map(s => {
     const days = s.days.join(' ');
-    return `<li class="section-row">
+    const rangeText = s.rangeStart || s.rangeEnd ? ` &middot; ${s.rangeStart ? formatShortDate(parseISODate(s.rangeStart)) : 'start'}&ndash;${s.rangeEnd ? formatShortDate(parseISODate(s.rangeEnd)) : 'end'}` : '';
+    const isActive = isRequired && course.sections.length > 1 && s.id === activeRequiredSectionId;
+    return `<li class="section-row${isActive ? ' section-row-active' : ''}">
       <span class="section-swatch" style="background:${course.color}"></span>
       <span class="section-label">${escapeHtml(s.label || 'Section')}</span>
-      <span class="section-meta">${days} &middot; ${s.start}&ndash;${s.end}${s.location ? ' &middot; ' + escapeHtml(s.location) : ''}</span>
+      <span class="section-meta">${days} &middot; ${s.start}&ndash;${s.end}${s.location ? ' &middot; ' + escapeHtml(s.location) : ''}${rangeText}</span>
+      ${isActive ? '<span class="section-in-use">in use</span>' : ''}
     </li>`;
   }).join('');
 
   let requiredSelector = '';
-  if (courseIsInMode(course, 'required') && course.sections.length > 1) {
-    const options = course.sections.map(s => `<option value="${s.id}">${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('');
+  if (isRequired && course.sections.length > 1) {
+    const options = course.sections.map(s => `<option value="${s.id}" ${s.id === activeRequiredSectionId ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('');
     requiredSelector = `<label class="core-select-label">Section used:
       <select class="required-section-select" data-course-id="${course.id}">${options}</select>
     </label>`;
@@ -174,6 +179,14 @@ function parseISODate(str) {
   const dt = new Date(y, m - 1, d);
   dt.setHours(0, 0, 0, 0);
   return dt;
+}
+
+// ISO date strings sort lexicographically the same as chronologically, so
+// plain string comparison is enough here — no need to parse Dates.
+function sectionActiveOnDate(section, isoDate) {
+  if (section.rangeStart && isoDate < section.rangeStart) return false;
+  if (section.rangeEnd && isoDate > section.rangeEnd) return false;
+  return true;
 }
 
 function mondayOnOrBefore(date) {
@@ -274,8 +287,11 @@ function renderCalendar(picks) {
 
   const dayColumns = allDates.map(d => {
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
-    const blocks = picks.filter(p => p.section.days.includes(dayName)).map(p => calendarBlockHtml(p, minStart, pxPerMin)).join('');
-    return `<div class="cal-day-col" data-date="${isoDateStr(d)}">${blocks}</div>`;
+    const isoD = isoDateStr(d);
+    const blocks = picks
+      .filter(p => p.section.days.includes(dayName) && sectionActiveOnDate(p.section, isoD))
+      .map(p => calendarBlockHtml(p, minStart, pxPerMin)).join('');
+    return `<div class="cal-day-col" data-date="${isoD}">${blocks}</div>`;
   }).join('');
 
   el('#calendar').innerHTML = `
@@ -513,6 +529,23 @@ function currentDisplayPicks() {
   return lockedPicks();
 }
 
+const NARROW_LAYOUT_QUERY = '(max-width: 1100px)';
+
+// Pegs the courses panel's height to the electives panel's rendered height
+// so a long course list scrolls internally instead of stretching the page.
+// Below the responsive breakpoint the two panels stack instead of sitting
+// side by side, so the cap is dropped there.
+function syncCoursesPanelHeight() {
+  const courses = el('.panel-courses');
+  const electives = el('.panel-electives');
+  if (!courses || !electives) return;
+  if (window.matchMedia(NARROW_LAYOUT_QUERY).matches) {
+    courses.style.maxHeight = '';
+    return;
+  }
+  courses.style.maxHeight = electives.offsetHeight + 'px';
+}
+
 function refreshAll() {
   renderCourseList();
   renderBucketPanel();
@@ -520,6 +553,7 @@ function refreshAll() {
   updateConflictBanner();
   renderCalendar(currentDisplayPicks());
   renderResults(lastSearch);
+  syncCoursesPanelHeight();
 }
 
 // ---------- Category manager modal ----------
@@ -706,6 +740,10 @@ function sectionRowHtml(s) {
       <button type="button" class="btn btn-small btn-danger btn-remove-section">Remove</button>
     </div>
     <div class="day-picker">${dayBoxes}</div>
+    <div class="form-row">
+      <label title="Leave both blank for the whole semester">Runs from (optional)<input type="date" class="sec-range-start" value="${s.rangeStart || ''}" /></label>
+      <label title="Leave both blank for the whole semester">Runs through (optional)<input type="date" class="sec-range-end" value="${s.rangeEnd || ''}" /></label>
+    </div>
   </div>`;
 }
 
@@ -727,11 +765,14 @@ function saveCourseFromForm(existingId) {
     const end = el('.sec-end', row).value;
     const location = el('.sec-location', row).value.trim();
     const days = els('.day-box input:checked', row).map(cb => cb.value);
+    const rangeStart = el('.sec-range-start', row).value || null;
+    const rangeEnd = el('.sec-range-end', row).value || null;
     if (!start || !end) { errorEl.hidden = false; errorEl.textContent = 'Every section needs a start and end time.'; return; }
     if (timeToMinutes(start) >= timeToMinutes(end)) { errorEl.hidden = false; errorEl.textContent = `Section "${label}" must end after it starts.`; return; }
     if (days.length === 0) { errorEl.hidden = false; errorEl.textContent = `Section "${label}" needs at least one day.`; return; }
+    if (rangeStart && rangeEnd && rangeEnd < rangeStart) { errorEl.hidden = false; errorEl.textContent = `Section "${label}"'s end date must be after its start date.`; return; }
     const existingSectionId = row.dataset.sectionId || null;
-    sections.push({ id: existingSectionId || uid(), label, start, end, location, days });
+    sections.push({ id: existingSectionId || uid(), label, start, end, location, days, rangeStart, rangeEnd });
   }
   if (sections.length === 0) { errorEl.hidden = false; errorEl.textContent = 'Add at least one section.'; return; }
   if (!name) { errorEl.hidden = false; errorEl.textContent = 'Course name is required.'; return; }
@@ -958,6 +999,8 @@ function init() {
     syncTopControls();
     refreshAll();
   });
+
+  window.addEventListener('resize', syncCoursesPanelHeight);
 
   refreshAll();
 }

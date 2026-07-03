@@ -8,9 +8,21 @@ function timeToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+// Sections without a rangeStart/rangeEnd are assumed to run the whole
+// semester, so they always overlap on the date axis. Two sections that
+// each specify a range only overlap if those ranges actually intersect —
+// this lets two half-semester sections share a day/time slot without being
+// flagged as conflicting, as long as they don't run at the same time.
+function dateRangesOverlap(a, b) {
+  if (a.rangeEnd && b.rangeStart && a.rangeEnd < b.rangeStart) return false;
+  if (b.rangeEnd && a.rangeStart && b.rangeEnd < a.rangeStart) return false;
+  return true;
+}
+
 function sectionsOverlap(a, b) {
   const sharedDay = a.days.some(d => b.days.includes(d));
   if (!sharedDay) return false;
+  if (!dateRangesOverlap(a, b)) return false;
   const aStart = timeToMinutes(a.start);
   const aEnd = timeToMinutes(a.end);
   const bStart = timeToMinutes(b.start);

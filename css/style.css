@@ -75,15 +75,31 @@ h1, h2, h3 { margin: 0 0 8px; }
 
 .layout {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 340px 400px 1fr;
   grid-template-areas:
-    "courses electives"
-    "calendar calendar";
+    "courses electives ."
+    "calendar calendar calendar";
   gap: 14px;
   padding: 14px;
   align-items: start;
 }
-.panel-courses { grid-area: courses; }
+.panel-courses {
+  grid-area: courses;
+  display: flex;
+  flex-direction: column;
+  /* max-height is set in JS to match .panel-electives' rendered height —
+     CSS Grid's stretch/min-height:0 tricks only stop an item from being
+     squeezed below its content by something else; they can't make a row
+     size to the *shorter* of two auto-height siblings, which is what
+     "peg courses' height to electives" actually needs. */
+  overflow: hidden;
+}
+.panel-courses .panel-header { flex-shrink: 0; }
+.panel-courses #course-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .panel-electives { grid-area: electives; }
 /* min-width:0 overrides the grid item's default content-based minimum —
    without it, the calendar's many wide day columns force this whole track
@@ -98,6 +114,8 @@ h1, h2, h3 { margin: 0 0 8px; }
       "electives"
       "calendar";
   }
+  .panel-courses { overflow: visible; }
+  .panel-courses #course-list { overflow-y: visible; }
 }
 
 .panel {
@@ -169,6 +187,19 @@ h1, h2, h3 { margin: 0 0 8px; }
 .section-label { font-weight: 600; }
 .section-meta { color: var(--text-dim); }
 .section-empty { color: var(--text-dim); font-style: italic; }
+.section-row-active .section-label { color: var(--accent); }
+.section-in-use {
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
 
 /* Calendar — a clean, When2Meet-style time grid: sticky day headers, a fixed
    time gutter, and fine horizontal rules every half hour / hour. */

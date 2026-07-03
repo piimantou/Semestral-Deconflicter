@@ -54,12 +54,22 @@ course) and get a feel for the tool.
    cross-listed course (e.g. one that satisfies both an "AI Electives" and a
    "Systems Electives" requirement) can be checked into both, and taking it
    once counts toward both targets at the same time rather than needing to
-   be picked twice. Each section's day/time is optionally paired with a
-   **Runs from / Runs through** date range for courses that don't span the
-   whole semester (a short module, a block seminar); leave both blank for a
-   section that meets every week of the semester. Two sections in the same
-   day/time slot but non-overlapping date ranges aren't treated as
-   conflicting, since they'd never actually coincide.
+   be picked twice. Each section is either:
+   - **Recurring weekly** — meets every week on the days/time you set,
+     optionally paired with a **Runs from / Runs through** date range for
+     courses that don't span the whole semester (a short module); leave
+     both blank for a section that meets every week of the semester.
+   - **Specific dates** — an explicit list of one-off meetings, each with
+     its own date *and* its own time, for anything that doesn't follow a
+     weekly pattern at all (a block seminar meeting Thursday evenings plus
+     weekend mornings on a handful of scattered dates, say). Add one row
+     per date.
+
+   Either way, the calendar and conflict detection treat sections
+   correctly: two sections sharing a day/time slot in non-overlapping date
+   ranges aren't flagged as conflicting, and a specific-dates section
+   correctly conflicts with a recurring one only on the dates where they'd
+   actually coincide.
 3. If a required course has multiple sections, pick which one you're
    actually enrolled in from the dropdown on its card — or pick **All
    sections** to show every one of its meeting times on the calendar at

@@ -119,6 +119,30 @@ function bucketPreviewPicks() {
 
 const MODE_BADGE_CLASS = { required: 'type-required', bucket: 'type-bucket', optional: 'type-optional' };
 
+// Short "days · time" or "N dates" summary, used in the section list and
+// in every section-picker dropdown (required/optional/bucket pool).
+function sectionSummaryText(s) {
+  if (s.scheduleType === 'dates') {
+    const n = (s.occurrences || []).length;
+    return `${n} specific date${n === 1 ? '' : 's'}`;
+  }
+  return `${(s.days || []).join(' ')} ${s.start}-${s.end}`;
+}
+
+function sectionMetaHtml(s) {
+  if (s.scheduleType === 'dates') {
+    const occ = (s.occurrences || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+    if (occ.length === 0) return 'No dates set';
+    const first = formatShortDate(parseISODate(occ[0].date));
+    const last = formatShortDate(parseISODate(occ[occ.length - 1].date));
+    const span = occ.length > 1 ? `${first}&ndash;${last}` : first;
+    return `${occ.length} date${occ.length === 1 ? '' : 's'} &middot; ${span}, times vary${s.location ? ' &middot; ' + escapeHtml(s.location) : ''}`;
+  }
+  const days = (s.days || []).join(' ');
+  const rangeText = s.rangeStart || s.rangeEnd ? ` &middot; ${s.rangeStart ? formatShortDate(parseISODate(s.rangeStart)) : 'start'}&ndash;${s.rangeEnd ? formatShortDate(parseISODate(s.rangeEnd)) : 'end'}` : '';
+  return `${days} &middot; ${s.start}&ndash;${s.end}${s.location ? ' &middot; ' + escapeHtml(s.location) : ''}${rangeText}`;
+}
+
 function courseCardHtml(course) {
   const badges = course.categoryIds.map(id => {
     const cat = categoryById(id);
@@ -128,20 +152,18 @@ function courseCardHtml(course) {
   const isRequired = courseIsInMode(course, 'required');
   const requiredValue = isRequired ? chosenRequiredValue(course) : null;
   const sectionsHtml = course.sections.map(s => {
-    const days = s.days.join(' ');
-    const rangeText = s.rangeStart || s.rangeEnd ? ` &middot; ${s.rangeStart ? formatShortDate(parseISODate(s.rangeStart)) : 'start'}&ndash;${s.rangeEnd ? formatShortDate(parseISODate(s.rangeEnd)) : 'end'}` : '';
     const isActive = isRequired && course.sections.length > 1 && (requiredValue === ALL_SECTIONS || s.id === requiredValue);
     return `<li class="section-row${isActive ? ' section-row-active' : ''}">
       <span class="section-swatch" style="background:${course.color}"></span>
       <span class="section-label">${escapeHtml(s.label || 'Section')}</span>
-      <span class="section-meta">${days} &middot; ${s.start}&ndash;${s.end}${s.location ? ' &middot; ' + escapeHtml(s.location) : ''}${rangeText}</span>
+      <span class="section-meta">${sectionMetaHtml(s)}</span>
       ${isActive ? '<span class="section-in-use">in use</span>' : ''}
     </li>`;
   }).join('');
 
   let requiredSelector = '';
   if (isRequired && course.sections.length > 1) {
-    const options = course.sections.map(s => `<option value="${s.id}" ${s.id === requiredValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('');
+    const options = course.sections.map(s => `<option value="${s.id}" ${s.id === requiredValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${sectionSummaryText(s)})</option>`).join('');
     const allOption = `<option value="${ALL_SECTIONS}" ${requiredValue === ALL_SECTIONS ? 'selected' : ''}>All sections</option>`;
     requiredSelector = `<label class="core-select-label">Section used:
       <select class="required-section-select" data-course-id="${course.id}">${allOption}${options}</select>
@@ -216,6 +238,20 @@ function sectionActiveOnDate(section, isoDate) {
   return true;
 }
 
+// Resolves every meeting time a section has on a given calendar date — zero
+// for a recurring section that doesn't meet that day/date, one for a normal
+// recurring meeting, and whatever's listed for a 'dates' (block-seminar)
+// section, which can carry a different time on each date.
+function occurrenceTimesForDate(section, isoDate, dayName) {
+  if (section.scheduleType === 'dates') {
+    return (section.occurrences || []).filter(o => o.date === isoDate);
+  }
+  if ((section.days || []).includes(dayName) && sectionActiveOnDate(section, isoDate)) {
+    return [{ start: section.start, end: section.end }];
+  }
+  return [];
+}
+
 function mondayOnOrBefore(date) {
   const d = new Date(date);
   const dow = d.getDay(); // 0 = Sun .. 6 = Sat
@@ -264,20 +300,27 @@ function semesterWeeks() {
 function computeTimeRange(picks) {
   let minStart = DEFAULT_RANGE_START, maxEnd = DEFAULT_RANGE_END;
   for (const { section } of picks) {
-    minStart = Math.min(minStart, timeToMinutes(section.start));
-    maxEnd = Math.max(maxEnd, timeToMinutes(section.end));
+    if (section.scheduleType === 'dates') {
+      for (const o of section.occurrences || []) {
+        minStart = Math.min(minStart, timeToMinutes(o.start));
+        maxEnd = Math.max(maxEnd, timeToMinutes(o.end));
+      }
+    } else {
+      minStart = Math.min(minStart, timeToMinutes(section.start));
+      maxEnd = Math.max(maxEnd, timeToMinutes(section.end));
+    }
   }
   minStart = Math.floor(minStart / 60) * 60;
   maxEnd = Math.ceil(maxEnd / 60) * 60;
   return { minStart, maxEnd };
 }
 
-function calendarBlockHtml(pick, minStart, pxPerMin) {
-  const top = (timeToMinutes(pick.section.start) - minStart) * pxPerMin;
-  const h = (timeToMinutes(pick.section.end) - timeToMinutes(pick.section.start)) * pxPerMin;
-  return `<div class="cal-block" style="top:${top}px;height:${h}px;background:${pick.course.color}" title="${escapeHtml(pick.course.name)}">
-    <div class="cal-block-title">${escapeHtml(pick.course.code || pick.course.name)}</div>
-    <div class="cal-block-meta">${pick.section.start}&ndash;${pick.section.end}${pick.section.location ? '<br>' + escapeHtml(pick.section.location) : ''}</div>
+function calendarBlockHtml(course, timeSlot, location, minStart, pxPerMin) {
+  const top = (timeToMinutes(timeSlot.start) - minStart) * pxPerMin;
+  const h = (timeToMinutes(timeSlot.end) - timeToMinutes(timeSlot.start)) * pxPerMin;
+  return `<div class="cal-block" style="top:${top}px;height:${h}px;background:${course.color}" title="${escapeHtml(course.name)}">
+    <div class="cal-block-title">${escapeHtml(course.code || course.name)}</div>
+    <div class="cal-block-meta">${timeSlot.start}&ndash;${timeSlot.end}${location ? '<br>' + escapeHtml(location) : ''}</div>
   </div>`;
 }
 
@@ -316,8 +359,8 @@ function renderCalendar(picks) {
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
     const isoD = isoDateStr(d);
     const blocks = picks
-      .filter(p => p.section.days.includes(dayName) && sectionActiveOnDate(p.section, isoD))
-      .map(p => calendarBlockHtml(p, minStart, pxPerMin)).join('');
+      .flatMap(p => occurrenceTimesForDate(p.section, isoD, dayName).map(t => calendarBlockHtml(p.course, t, p.section.location, minStart, pxPerMin)))
+      .join('');
     return `<div class="cal-day-col" data-date="${isoD}">${blocks}</div>`;
   }).join('');
 
@@ -354,7 +397,16 @@ function renderGenericWeekCalendar(picks) {
   }
 
   const dayColumns = days.map(day => {
-    const blocks = picks.filter(p => p.section.days.includes(day)).map(p => calendarBlockHtml(p, minStart, pxPerMin)).join('');
+    const blocks = picks.flatMap(p => {
+      if (p.section.scheduleType === 'dates') {
+        // No real dates to anchor to here — approximate by the weekday each
+        // occurrence actually falls on, without implying it's weekly.
+        return (p.section.occurrences || [])
+          .filter(o => dayOfWeekFromISODate(o.date) === day)
+          .map(o => calendarBlockHtml(p.course, o, p.section.location, minStart, pxPerMin));
+      }
+      return (p.section.days || []).includes(day) ? [calendarBlockHtml(p.course, p.section, p.section.location, minStart, pxPerMin)] : [];
+    }).join('');
     return `<div class="cal-day-col" data-day="${day}">${blocks}</div>`;
   }).join('');
 
@@ -406,7 +458,7 @@ function renderBucketPanel() {
       const sectionSelect = checked && c.sections.length > 1
         ? `<select class="pool-section-select" data-course-id="${c.id}">
              <option value="${ALL_SECTIONS}" ${sectionValue === ALL_SECTIONS ? 'selected' : ''}>All sections</option>
-             ${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}
+             ${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${sectionSummaryText(s)})</option>`).join('')}
            </select>`
         : '';
       return `<label class="pool-item">
@@ -443,7 +495,7 @@ function renderOptionalPanel() {
     const sectionSelect = c.sections.length > 1
       ? `<select class="optional-section-select" data-course-id="${c.id}">
            <option value="${ALL_SECTIONS}" ${sectionValue === ALL_SECTIONS ? 'selected' : ''}>All sections</option>
-           ${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}
+           ${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${sectionSummaryText(s)})</option>`).join('')}
          </select>`
       : '';
     return `<label class="pool-item">
@@ -765,7 +817,7 @@ const MODE_LABEL = { required: 'Required', bucket: 'Bucket', optional: 'Optional
 function openCourseModal(existing) {
   const isEdit = !!existing;
   const course = existing || { id: null, code: '', name: '', categoryIds: state.categories[0] ? [state.categories[0].id] : [], instructor: '', sections: [] };
-  const sections = course.sections.length ? course.sections : [{ id: null, label: 'Section 01', days: [], start: '09:00', end: '10:15', location: '' }];
+  const sections = course.sections.length ? course.sections : [{ id: null, label: 'Section 01', scheduleType: 'recurring', days: [], start: '09:00', end: '10:15', location: '' }];
 
   const categoryChecks = state.categories.map(cat =>
     `<label class="category-check"><input type="checkbox" name="categoryIds" value="${cat.id}" ${course.categoryIds.includes(cat.id) ? 'checked' : ''} /> ${escapeHtml(cat.name)} <span class="category-check-mode">(${MODE_LABEL[cat.mode]})</span></label>`
@@ -802,13 +854,35 @@ function openCourseModal(existing) {
 
   el('#btn-add-section-row').addEventListener('click', () => {
     const container = el('#section-rows');
-    container.insertAdjacentHTML('beforeend', sectionRowHtml({ id: null, label: `Section ${container.children.length + 1}`, days: [], start: '09:00', end: '10:15', location: '' }));
+    container.insertAdjacentHTML('beforeend', sectionRowHtml({ id: null, label: `Section ${container.children.length + 1}`, scheduleType: 'recurring', days: [], start: '09:00', end: '10:15', location: '' }));
+  });
+
+  el('#section-rows').addEventListener('change', (e) => {
+    if (e.target.matches('.sec-schedule-type')) {
+      const row = e.target.closest('.section-form-row');
+      const isDates = e.target.value === 'dates';
+      el('.recurring-fields', row).hidden = isDates;
+      el('.dates-fields', row).hidden = !isDates;
+    }
   });
 
   root.addEventListener('click', (e) => {
     if (e.target.id === 'modal-overlay' || e.target.id === 'btn-cancel-modal') closeModal();
     if (e.target.matches('.btn-remove-section')) {
       e.target.closest('.section-form-row').remove();
+    }
+    if (e.target.matches('.btn-add-occurrence')) {
+      const row = e.target.closest('.section-form-row');
+      const container = el('.occurrence-rows', row);
+      const rows = els('.occurrence-row', container);
+      const last = rows[rows.length - 1];
+      const defaults = last
+        ? { start: el('.occ-start', last).value, end: el('.occ-end', last).value }
+        : { date: '', start: '09:00', end: '10:00' };
+      container.insertAdjacentHTML('beforeend', occurrenceRowHtml({ id: null, date: '', ...defaults }));
+    }
+    if (e.target.matches('.btn-remove-occurrence')) {
+      e.target.closest('.occurrence-row').remove();
     }
   });
 
@@ -818,22 +892,54 @@ function openCourseModal(existing) {
   });
 }
 
+function occurrenceRowHtml(o) {
+  // Not marked required: these inputs are hidden whenever this section is in
+  // "recurring" mode, and a hidden-but-required field silently blocks form
+  // submission (the browser can't focus it to show the validation error).
+  // saveCourseFromForm() validates these explicitly instead, only for rows
+  // actually in "dates" mode.
+  return `<div class="occurrence-row" data-occurrence-id="${o.id || ''}">
+    <input type="date" class="occ-date" value="${o.date || ''}" />
+    <input type="time" class="occ-start" value="${o.start || '09:00'}" />
+    <span class="occ-time-sep">&ndash;</span>
+    <input type="time" class="occ-end" value="${o.end || '10:00'}" />
+    <button type="button" class="btn btn-small btn-danger btn-remove-occurrence" title="Remove this date">&times;</button>
+  </div>`;
+}
+
 function sectionRowHtml(s) {
+  const isDates = s.scheduleType === 'dates';
+  const rowKey = s.id || uid();
   const dayBoxes = DAY_LABELS.map(d =>
-    `<label class="day-box"><input type="checkbox" value="${d}" ${s.days.includes(d) ? 'checked' : ''}/>${d}</label>`
+    `<label class="day-box"><input type="checkbox" value="${d}" ${(s.days || []).includes(d) ? 'checked' : ''}/>${d}</label>`
   ).join('');
+  const occurrenceRows = (s.occurrences && s.occurrences.length ? s.occurrences : [{ id: null, date: '', start: '09:00', end: '10:00' }])
+    .map(occurrenceRowHtml).join('');
   return `<div class="section-form-row" data-section-id="${s.id || ''}">
     <div class="form-row">
       <label>Label<input type="text" class="sec-label" value="${escapeAttr(s.label)}" /></label>
-      <label>Start<input type="time" class="sec-start" value="${s.start}" required /></label>
-      <label>End<input type="time" class="sec-end" value="${s.end}" required /></label>
       <label>Location<input type="text" class="sec-location" value="${escapeAttr(s.location || '')}" /></label>
       <button type="button" class="btn btn-small btn-danger btn-remove-section">Remove</button>
     </div>
-    <div class="day-picker">${dayBoxes}</div>
-    <div class="form-row">
-      <label title="Leave both blank for the whole semester">Runs from (optional)<input type="date" class="sec-range-start" value="${s.rangeStart || ''}" /></label>
-      <label title="Leave both blank for the whole semester">Runs through (optional)<input type="date" class="sec-range-end" value="${s.rangeEnd || ''}" /></label>
+    <div class="form-row schedule-type-row">
+      <label class="radio-label"><input type="radio" name="sec-schedule-type-${rowKey}" class="sec-schedule-type" value="recurring" ${!isDates ? 'checked' : ''} /> Recurring weekly</label>
+      <label class="radio-label"><input type="radio" name="sec-schedule-type-${rowKey}" class="sec-schedule-type" value="dates" ${isDates ? 'checked' : ''} /> Specific dates</label>
+    </div>
+    <div class="recurring-fields" ${isDates ? 'hidden' : ''}>
+      <div class="form-row">
+        <label>Start<input type="time" class="sec-start" value="${s.start || '09:00'}" /></label>
+        <label>End<input type="time" class="sec-end" value="${s.end || '10:15'}" /></label>
+      </div>
+      <div class="day-picker">${dayBoxes}</div>
+      <div class="form-row">
+        <label title="Leave both blank for the whole semester">Runs from (optional)<input type="date" class="sec-range-start" value="${s.rangeStart || ''}" /></label>
+        <label title="Leave both blank for the whole semester">Runs through (optional)<input type="date" class="sec-range-end" value="${s.rangeEnd || ''}" /></label>
+      </div>
+    </div>
+    <div class="dates-fields" ${isDates ? '' : 'hidden'}>
+      <p class="modal-hint">For courses that don't meet weekly — add each specific date it meets, with its own time (e.g. a Thursday-evening-plus-weekend block seminar).</p>
+      <div class="occurrence-rows">${occurrenceRows}</div>
+      <button type="button" class="btn btn-small btn-ghost btn-add-occurrence">+ Add date</button>
     </div>
   </div>`;
 }
@@ -852,9 +958,29 @@ function saveCourseFromForm(existingId) {
   const sections = [];
   for (const row of sectionRows) {
     const label = el('.sec-label', row).value.trim() || 'Section';
+    const location = el('.sec-location', row).value.trim();
+    const existingSectionId = row.dataset.sectionId || null;
+    const scheduleType = el('.sec-schedule-type:checked', row)?.value || 'recurring';
+
+    if (scheduleType === 'dates') {
+      const occurrenceRows = els('.occurrence-row', row);
+      const occurrences = [];
+      for (const occRow of occurrenceRows) {
+        const date = el('.occ-date', occRow).value;
+        const start = el('.occ-start', occRow).value;
+        const end = el('.occ-end', occRow).value;
+        if (!date || !start || !end) { errorEl.hidden = false; errorEl.textContent = `Section "${label}" has a date row missing a date or time.`; return; }
+        if (timeToMinutes(start) >= timeToMinutes(end)) { errorEl.hidden = false; errorEl.textContent = `Section "${label}": each date must end after it starts.`; return; }
+        occurrences.push({ id: occRow.dataset.occurrenceId || uid(), date, start, end });
+      }
+      if (occurrences.length === 0) { errorEl.hidden = false; errorEl.textContent = `Section "${label}" needs at least one date.`; return; }
+      occurrences.sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+      sections.push({ id: existingSectionId || uid(), label, location, scheduleType, occurrences });
+      continue;
+    }
+
     const start = el('.sec-start', row).value;
     const end = el('.sec-end', row).value;
-    const location = el('.sec-location', row).value.trim();
     const days = els('.day-box input:checked', row).map(cb => cb.value);
     const rangeStart = el('.sec-range-start', row).value || null;
     const rangeEnd = el('.sec-range-end', row).value || null;
@@ -862,8 +988,7 @@ function saveCourseFromForm(existingId) {
     if (timeToMinutes(start) >= timeToMinutes(end)) { errorEl.hidden = false; errorEl.textContent = `Section "${label}" must end after it starts.`; return; }
     if (days.length === 0) { errorEl.hidden = false; errorEl.textContent = `Section "${label}" needs at least one day.`; return; }
     if (rangeStart && rangeEnd && rangeEnd < rangeStart) { errorEl.hidden = false; errorEl.textContent = `Section "${label}"'s end date must be after its start date.`; return; }
-    const existingSectionId = row.dataset.sectionId || null;
-    sections.push({ id: existingSectionId || uid(), label, start, end, location, days, rangeStart, rangeEnd });
+    sections.push({ id: existingSectionId || uid(), label, start, end, location, days, rangeStart, rangeEnd, scheduleType });
   }
   if (sections.length === 0) { errorEl.hidden = false; errorEl.textContent = 'Add at least one section.'; return; }
   if (!name) { errorEl.hidden = false; errorEl.textContent = 'Course name is required.'; return; }

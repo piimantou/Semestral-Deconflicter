@@ -413,6 +413,13 @@ input, select {
 }
 .day-picker { display: flex; gap: 8px; flex-wrap: wrap; }
 .day-box { display: flex; align-items: center; gap: 3px; font-size: 0.78rem; color: var(--text-dim); }
+.schedule-type-row { margin-bottom: 8px; }
+.occurrence-rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.occurrence-row { display: flex; align-items: center; gap: 6px; }
+.occurrence-row input[type="date"] { flex: 1; min-width: 140px; }
+.occurrence-row input[type="time"] { width: 110px; }
+.occ-time-sep { color: var(--text-dim); }
+.dates-fields .modal-hint { margin-bottom: 8px; }
 .form-error { color: var(--danger); font-size: 0.85rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .modal-hint { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 12px; }

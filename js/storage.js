@@ -3,7 +3,16 @@
 // Shape of the state document:
 // {
 //   courses: [{ id, code, name, categoryIds: [catId,...], instructor, color,
-//               sections: [{ id, label, days: ['Mon',...], start: 'HH:MM', end: 'HH:MM', location }] }],
+//               sections: [
+//                 // recurring (default): meets every week on these days within an optional sub-range
+//                 { id, label, location, scheduleType: 'recurring',
+//                   days: ['Mon',...], start: 'HH:MM', end: 'HH:MM',
+//                   rangeStart: 'YYYY-MM-DD'|null, rangeEnd: 'YYYY-MM-DD'|null },
+//                 // dates: an explicit list of one-off meetings, each with its own time —
+//                 // for courses that don't follow a weekly pattern (block seminars, etc.)
+//                 { id, label, location, scheduleType: 'dates',
+//                   occurrences: [{ id, date: 'YYYY-MM-DD', start: 'HH:MM', end: 'HH:MM' }] },
+//               ] }],
 //   categories: [
 //     { id, name, mode: 'required' },                                   // every course in it is mandatory
 //     { id, name, mode: 'bucket', target: number, pool: [courseId,...] }, // choose `target` courses from `pool`
@@ -122,10 +131,9 @@ function normalize(state) {
     }
   });
   merged.courses = (merged.courses || []).map(c => {
-    if (!c.categoryIds) {
-      return { ...c, categoryIds: c.categoryId ? [c.categoryId] : [] };
-    }
-    return c;
+    const course = c.categoryIds ? c : { ...c, categoryIds: c.categoryId ? [c.categoryId] : [] };
+    course.sections = (course.sections || []).map(s => s.scheduleType ? s : { ...s, scheduleType: 'recurring' });
+    return course;
   });
   merged.requiredSelections = merged.requiredSelections || {};
   merged.optionalSelections = merged.optionalSelections || {};

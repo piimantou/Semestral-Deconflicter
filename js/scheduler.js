@@ -8,6 +8,19 @@ function timeToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+function timeRangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return timeToMinutes(aStart) < timeToMinutes(bEnd) && timeToMinutes(bStart) < timeToMinutes(aEnd);
+}
+
+// 'YYYY-MM-DD' compares lexicographically the same as chronologically, and
+// JS's Date(y, m-1, d) constructor reads it in local time (no UTC-shift
+// surprises), so this is safe without a date library.
+function dayOfWeekFromISODate(isoDate) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return DAY_ORDER[(date.getDay() + 6) % 7];
+}
+
 // Sections without a rangeStart/rangeEnd are assumed to run the whole
 // semester, so they always overlap on the date axis. Two sections that
 // each specify a range only overlap if those ranges actually intersect —
@@ -19,15 +32,37 @@ function dateRangesOverlap(a, b) {
   return true;
 }
 
+// A section is either 'recurring' (meets every week on `days` at `start`-
+// `end`, optionally only within `rangeStart`/`rangeEnd`) or 'dates' (an
+// explicit list of one-off `occurrences`, each with its own date and time —
+// for block seminars or anything that doesn't follow a weekly pattern).
 function sectionsOverlap(a, b) {
-  const sharedDay = a.days.some(d => b.days.includes(d));
-  if (!sharedDay) return false;
-  if (!dateRangesOverlap(a, b)) return false;
-  const aStart = timeToMinutes(a.start);
-  const aEnd = timeToMinutes(a.end);
-  const bStart = timeToMinutes(b.start);
-  const bEnd = timeToMinutes(b.end);
-  return aStart < bEnd && bStart < aEnd;
+  const aDated = a.scheduleType === 'dates';
+  const bDated = b.scheduleType === 'dates';
+
+  if (!aDated && !bDated) {
+    if (!a.days.some(d => b.days.includes(d))) return false;
+    if (!dateRangesOverlap(a, b)) return false;
+    return timeRangesOverlap(a.start, a.end, b.start, b.end);
+  }
+
+  if (aDated && bDated) {
+    return (a.occurrences || []).some(oa =>
+      (b.occurrences || []).some(ob => oa.date === ob.date && timeRangesOverlap(oa.start, oa.end, ob.start, ob.end))
+    );
+  }
+
+  // One dated, one recurring: each occurrence conflicts if it falls on one
+  // of the recurring section's days, within its active range, and the
+  // times overlap.
+  const occSection = aDated ? a : b;
+  const recSection = aDated ? b : a;
+  return (occSection.occurrences || []).some(occ => {
+    if (!recSection.days.includes(dayOfWeekFromISODate(occ.date))) return false;
+    if (recSection.rangeStart && occ.date < recSection.rangeStart) return false;
+    if (recSection.rangeEnd && occ.date > recSection.rangeEnd) return false;
+    return timeRangesOverlap(occ.start, occ.end, recSection.start, recSection.end);
+  });
 }
 
 // picks: array of { course, section }
@@ -47,6 +82,15 @@ function scheduleMetrics(picks) {
   const byDay = {};
   let totalClassMinutes = 0;
   for (const { section } of picks) {
+    if (section.scheduleType === 'dates') {
+      for (const occ of section.occurrences || []) {
+        const dow = dayOfWeekFromISODate(occ.date);
+        totalClassMinutes += timeToMinutes(occ.end) - timeToMinutes(occ.start);
+        byDay[dow] = byDay[dow] || [];
+        byDay[dow].push({ start: timeToMinutes(occ.start), end: timeToMinutes(occ.end) });
+      }
+      continue;
+    }
     const dur = timeToMinutes(section.end) - timeToMinutes(section.start);
     totalClassMinutes += dur * section.days.length;
     for (const d of section.days) {

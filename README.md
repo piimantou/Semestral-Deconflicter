@@ -32,31 +32,39 @@ All data is saved to `localStorage` in your browser, so it persists between visi
 on the same device/browser. Use **Export JSON** / **Import JSON** to back up or
 move your data elsewhere.
 
-Click **Load example** to see a sample semester (2 core courses split across
-a required category and two elective buckets) and get a feel for the tool.
+Click **Load example** to see a sample semester (core courses, two
+overlapping electives buckets sharing a cross-listed course, and an optional
+course) and get a feel for the tool.
 
 ## How it works
 
-1. **Set up categories.** Click **Categories** to define the buckets your
-   courses fall into. A category is either:
+1. **Set up categories.** Click **Categories** to define the groups your
+   courses fall into. A category is one of:
    - **Required** — every course assigned to it is mandatory (e.g. "Core").
    - **Bucket** — you're choosing a fixed number of courses out of the ones
      assigned to it (e.g. "AI Electives, take 2" or "Humanities, take 1").
-   You can have as many bucket categories as you need — useful when your
-   program requires "1 from group A and 2 from group B," not just a single
-   flat elective pool.
-2. **Add your courses**, assigning each to a category. Each course can have
-   one or more sections (different day/time offerings).
+     You can have as many bucket categories as you need — useful when your
+     program requires "1 from group A and 2 from group B," not just a
+     single flat elective pool.
+   - **Optional** — never auto-selected by the search; you individually
+     check off any of these you want included, e.g. a course you're taking
+     purely out of interest that isn't required by anything.
+2. **Add your courses**, assigning each to one or more categories — a
+   cross-listed course (e.g. one that satisfies both an "AI Electives" and a
+   "Systems Electives" requirement) can be checked into both, and taking it
+   once counts toward both targets at the same time rather than needing to
+   be picked twice.
 3. If a required course has multiple sections, pick which one you're
-   actually enrolled in from the dropdown on its card. A red banner appears
-   if your required courses conflict with each other — fix that first, since
-   no elective choice can work around it.
+   actually enrolled in from the dropdown on its card. Check any courses you
+   want in the **Optional courses** panel regardless of bucket targets. A
+   red banner appears if your required/optional-selected courses conflict
+   with each other — fix that first, since no bucket choice can work around it.
 4. In the **Bucket deconfliction** panel, each bucket category shows its
    target count and the courses under consideration (uncheck any you want to
    exclude without deleting). Click **Generate valid combinations** — the
    tool exhaustively searches every way to satisfy every bucket's target
-   simultaneously (and a section for each chosen course) without conflicting
-   with your required schedule or each other.
+   simultaneously (crediting cross-listed courses toward every bucket they
+   belong to) without conflicting with your locked-in schedule or each other.
 5. Results are ranked by your chosen criterion (fewest days on campus, least
    idle time between classes, earliest finish, or latest start). **Preview**
    shows a combination on the calendar without saving it; **Pin to calendar**
@@ -82,11 +90,15 @@ mid-week, that edge week is simply partial (e.g. only Wed–Fri).
 
 ## Notes on the search
 
-Generating combinations is a backtracking search: for each bucket category it
-tries every subset of the target size from that category's pool, then across
-all bucket categories' subsets (a lazily-explored Cartesian product) it
-backtracks over section choices, pruning as soon as two sections overlap. To
-keep the browser responsive with several categories or large pools, the
-search is capped (combinations explored, backtracking nodes, results kept);
-if you hit the cap the UI tells you the search was truncated — narrow a
-bucket's pool or lower its target to get an exhaustive result.
+Generating combinations is a backtracking search over the union of every
+bucket category's candidate pool: for each candidate course it branches on
+include/exclude, pruning a branch as soon as it can no longer reach some
+bucket's target (or already overshot one), and checking section conflicts
+against everything already locked in whenever it includes a course. A course
+in more than one bucket's pool increments every one of those buckets' counts
+at once when chosen, which is what makes cross-listed courses satisfy
+multiple requirements with a single enrollment. To keep the browser
+responsive with several categories or large pools, the search is capped
+(backtracking nodes, results kept); if you hit the cap the UI tells you the
+search was truncated — narrow a bucket's pool or lower its target to get an
+exhaustive result.

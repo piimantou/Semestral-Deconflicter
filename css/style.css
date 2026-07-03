@@ -143,6 +143,7 @@ h1, h2, h3 { margin: 0 0 8px; }
 }
 .type-required { background: rgba(76, 110, 245, 0.2); color: #7d9bff; }
 .type-bucket { background: rgba(18, 184, 134, 0.2); color: #3fd6a4; }
+.type-optional { background: rgba(247, 159, 0, 0.2); color: #f5b93f; }
 
 .core-select-label { display: block; font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; }
 .core-select-label select { margin-left: 6px; }
@@ -334,6 +335,15 @@ input, select {
 .form-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .form-row label { display: flex; flex-direction: column; gap: 3px; font-size: 0.82rem; color: var(--text-dim); flex: 1; min-width: 120px; }
 .radio-label { flex-direction: row !important; align-items: center; gap: 6px !important; }
+.category-checklist {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 10px;
+}
+.category-checklist legend { font-size: 0.78rem; color: var(--text-dim); padding: 0 4px; }
+.category-check { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 3px 0; }
+.category-check-mode { color: var(--text-dim); font-size: 0.76rem; }
 .section-form-row {
   border: 1px solid var(--border);
   border-radius: 6px;

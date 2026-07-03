@@ -31,26 +31,6 @@ function findConflicts(picks) {
   return conflicts;
 }
 
-function combinations(arr, k) {
-  const results = [];
-  if (k < 0) return results;
-  if (k === 0) return [[]];
-  if (k > arr.length) return results;
-  const backtrack = (start, chosen) => {
-    if (chosen.length === k) {
-      results.push(chosen.slice());
-      return;
-    }
-    for (let i = start; i < arr.length; i++) {
-      chosen.push(arr[i]);
-      backtrack(i + 1, chosen);
-      chosen.pop();
-    }
-  };
-  backtrack(0, []);
-  return results;
-}
-
 function scheduleMetrics(picks) {
   const byDay = {};
   let totalClassMinutes = 0;
@@ -99,76 +79,104 @@ function comparatorFor(sortMode) {
   }
 }
 
-// Limits to keep the browser responsive even with several bucket categories.
+// Limits to keep the browser responsive even with several bucket categories
+// or a large elective pool.
 const LIMITS = {
-  maxLeaves: 4000,       // total (category-subset) combinations explored across all buckets
-  maxNodesPerLeaf: 20000, // section-assignment backtracking nodes per combination
+  maxNodes: 300000,
   maxResults: 300,
 };
 
 /**
- * Generates every conflict-free way to combine all `requiredCourses`
- * (mandatory, one section each) with exactly `target` courses from each
- * of `bucketCategories` (one section each per chosen course).
+ * Generates every conflict-free way to combine all `fixedCourses` (already
+ * locked in — mandatory required-category courses plus anything the user
+ * manually opted into — one section each) with exactly `target` more
+ * courses per bucket category.
+ *
+ * A course can appear in more than one bucket's `courses` pool (e.g. a
+ * cross-listed elective); choosing it once counts toward every bucket it
+ * belongs to simultaneously, rather than needing to be picked once per
+ * bucket. bucketCategories' targets should already be reduced by whatever
+ * fixedCourses contribute to them, and their pools should already exclude
+ * fixedCourses — the caller (runGeneration in app.js) does this so this
+ * function only has to solve for what's still needed.
  *
  * bucketCategories: [{ id, name, target, courses: [course, ...] }]
  *
  * Returns { results, truncated }
- *   results: [{ picks: [{course, section, categoryId?}], metrics }] sorted by sortMode
+ *   results: [{ picks: [{course, section}], metrics }] sorted by sortMode
  */
-function generateCombinations(requiredCourses, bucketCategories, sortMode) {
+function generateCombinations(fixedCourses, bucketCategories, sortMode) {
   const results = [];
   let truncated = false;
-  let leaves = 0;
+  let nodes = 0;
 
-  const subsetsPerCategory = bucketCategories.map(cat => {
-    const target = Math.max(0, Math.min(cat.target, cat.courses.length));
-    return combinations(cat.courses, target);
-  });
+  // Union of every bucket's candidate courses, deduped, each tagged with
+  // which bucket(s) choosing it would satisfy.
+  const unionMap = new Map();
+  for (const cat of bucketCategories) {
+    for (const course of cat.courses) {
+      if (!unionMap.has(course.id)) unionMap.set(course.id, { course, bucketIds: [] });
+      unionMap.get(course.id).bucketIds.push(cat.id);
+    }
+  }
+  const unionEntries = Array.from(unionMap.values());
+  const targetById = new Map(bucketCategories.map(c => [c.id, Math.max(0, c.target)]));
 
-  const runBacktrack = (courseList) => {
+  // Suffix sums: remainingCapacity[i][bucketId] = how many more entries from
+  // index i onward could still contribute to that bucket, for pruning.
+  const remainingCapacity = new Array(unionEntries.length + 1);
+  remainingCapacity[unionEntries.length] = new Map(bucketCategories.map(c => [c.id, 0]));
+  for (let i = unionEntries.length - 1; i >= 0; i--) {
+    const next = new Map(remainingCapacity[i + 1]);
+    for (const bid of unionEntries[i].bucketIds) next.set(bid, next.get(bid) + 1);
+    remainingCapacity[i] = next;
+  }
+
+  const picks = fixedCourses.filter(c => c.sections.length > 0).map(c => ({ course: c, section: c.sections[0] }));
+  const counts = new Map(bucketCategories.map(c => [c.id, 0]));
+
+  const backtrack = (idx) => {
     if (results.length >= LIMITS.maxResults) return true;
-    let nodes = 0;
-    const picks = [];
-    const backtrack = (idx) => {
-      if (results.length >= LIMITS.maxResults) return true;
-      if (nodes++ > LIMITS.maxNodesPerLeaf) { truncated = true; return true; }
-      if (idx === courseList.length) {
-        results.push({ picks: picks.slice(), metrics: scheduleMetrics(picks) });
-        return false;
+    if (nodes++ > LIMITS.maxNodes) { truncated = true; return true; }
+
+    if (idx === unionEntries.length) {
+      for (const cat of bucketCategories) {
+        if (counts.get(cat.id) !== targetById.get(cat.id)) return false;
       }
-      const course = courseList[idx];
-      for (const section of course.sections) {
-        const conflict = picks.some(p => sectionsOverlap(p.section, section));
-        if (conflict) continue;
-        picks.push({ course, section });
+      results.push({ picks: picks.slice(), metrics: scheduleMetrics(picks) });
+      return false;
+    }
+
+    // Prune: if some bucket can't reach its target even with every
+    // remaining candidate, this whole branch is dead.
+    const cap = remainingCapacity[idx];
+    for (const cat of bucketCategories) {
+      if (counts.get(cat.id) + cap.get(cat.id) < targetById.get(cat.id)) return false;
+    }
+
+    const entry = unionEntries[idx];
+
+    // Branch: skip this course.
+    if (backtrack(idx + 1)) return true;
+
+    // Branch: take this course, if doing so wouldn't overshoot any target
+    // it counts toward.
+    const overshoots = entry.bucketIds.some(bid => counts.get(bid) + 1 > targetById.get(bid));
+    if (!overshoots) {
+      for (const section of entry.course.sections) {
+        if (picks.some(p => sectionsOverlap(p.section, section))) continue;
+        picks.push({ course: entry.course, section });
+        entry.bucketIds.forEach(bid => counts.set(bid, counts.get(bid) + 1));
         const stop = backtrack(idx + 1);
         picks.pop();
+        entry.bucketIds.forEach(bid => counts.set(bid, counts.get(bid) - 1));
         if (stop) return true;
       }
-      return false;
-    };
-    return backtrack(0);
-  };
-
-  // Cartesian product across bucket categories' subsets, explored lazily via recursion
-  // so we never materialize the full product up front.
-  const walkCategories = (catIdx, chosenElectives) => {
-    if (results.length >= LIMITS.maxResults) return true;
-    if (catIdx === subsetsPerCategory.length) {
-      leaves++;
-      if (leaves > LIMITS.maxLeaves) { truncated = true; return true; }
-      const courseList = requiredCourses.concat(chosenElectives).filter(c => c.sections.length > 0);
-      return runBacktrack(courseList);
-    }
-    for (const subset of subsetsPerCategory[catIdx]) {
-      const stop = walkCategories(catIdx + 1, chosenElectives.concat(subset));
-      if (stop) return true;
     }
     return false;
   };
 
-  walkCategories(0, []);
+  backtrack(0);
 
   results.sort(comparatorFor(sortMode));
   return { results, truncated };

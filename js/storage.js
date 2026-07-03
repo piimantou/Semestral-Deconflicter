@@ -2,21 +2,27 @@
 //
 // Shape of the state document:
 // {
-//   courses: [{ id, code, name, categoryId, instructor, color,
+//   courses: [{ id, code, name, categoryIds: [catId,...], instructor, color,
 //               sections: [{ id, label, days: ['Mon',...], start: 'HH:MM', end: 'HH:MM', location }] }],
 //   categories: [
 //     { id, name, mode: 'required' },                                   // every course in it is mandatory
-//     { id, name, mode: 'bucket', target: number, pool: [courseId,...] } // choose `target` courses from `pool`
+//     { id, name, mode: 'bucket', target: number, pool: [courseId,...] }, // choose `target` courses from `pool`
+//     { id, name, mode: 'optional' },                                   // available extras, never auto-selected
 //   ],
 //   requiredSelections: { [courseId]: sectionId },  // which section is used for a multi-section required course
+//   optionalSelections: { [courseId]: sectionId },  // courses the user has manually opted into, and which section
 //   sortMode: string,
 //   showWeekend: boolean,
 //   semesterStart: 'YYYY-MM-DD',
 //   semesterEnd: 'YYYY-MM-DD',
 //   pinnedSchedule: { [courseId]: sectionId } | null
 // }
+//
+// A course can belong to more than one category — e.g. a cross-listed
+// elective that counts toward two different bucket requirements at once.
 
-const STORAGE_KEY = 'semestral-deconflicter/v2';
+const STORAGE_KEY = 'semestral-deconflicter/v3';
+const V2_STORAGE_KEY = 'semestral-deconflicter/v2';
 const LEGACY_STORAGE_KEY = 'semestral-deconflicter/v1';
 
 const COLOR_PALETTE = [
@@ -61,6 +67,7 @@ function defaultState() {
       { id: DEFAULT_ELECTIVE_CATEGORY_ID, name: 'Electives', mode: 'bucket', target: 1, pool: [] },
     ],
     requiredSelections: {},
+    optionalSelections: {},
     sortMode: 'compact',
     showWeekend: false,
     pinnedSchedule: null,
@@ -68,8 +75,8 @@ function defaultState() {
   };
 }
 
-// Upgrades a v1 document (flat course.type: 'core'|'elective') into the v2
-// category model, mapping 'core' -> the default Core category and
+// Upgrades a v1 document (flat course.type: 'core'|'elective') into the
+// current category model, mapping 'core' -> the default Core category and
 // 'elective' -> the default Electives bucket.
 function migrateV1(v1) {
   const state = defaultState();
@@ -78,18 +85,30 @@ function migrateV1(v1) {
     id: c.id,
     code: c.code,
     name: c.name,
-    categoryId: c.type === 'core' ? DEFAULT_CORE_CATEGORY_ID : DEFAULT_ELECTIVE_CATEGORY_ID,
+    categoryIds: [c.type === 'core' ? DEFAULT_CORE_CATEGORY_ID : DEFAULT_ELECTIVE_CATEGORY_ID],
     instructor: c.instructor,
     color: c.color,
     sections: c.sections,
   }));
-  electiveCategory.pool = state.courses.filter(c => c.categoryId === DEFAULT_ELECTIVE_CATEGORY_ID).map(c => c.id);
+  electiveCategory.pool = state.courses.filter(c => c.categoryIds.includes(DEFAULT_ELECTIVE_CATEGORY_ID)).map(c => c.id);
   electiveCategory.target = v1.electiveTarget ?? 1;
   state.requiredSelections = v1.coreSelections || {};
   state.sortMode = v1.sortMode || 'compact';
   state.showWeekend = !!v1.showWeekend;
   state.pinnedSchedule = v1.pinnedSchedule || null;
   return state;
+}
+
+// Upgrades a v2 document (single course.categoryId string) to v3
+// (course.categoryIds array), preserving everything else as-is.
+function migrateV2(v2) {
+  const migrated = { ...v2 };
+  migrated.courses = (v2.courses || []).map(c => {
+    const { categoryId, ...rest } = c;
+    return { ...rest, categoryIds: categoryId ? [categoryId] : [] };
+  });
+  migrated.optionalSelections = {};
+  return migrated;
 }
 
 function normalize(state) {
@@ -101,7 +120,14 @@ function normalize(state) {
       cat.target = cat.target ?? 1;
     }
   });
+  merged.courses = (merged.courses || []).map(c => {
+    if (!c.categoryIds) {
+      return { ...c, categoryIds: c.categoryId ? [c.categoryId] : [] };
+    }
+    return c;
+  });
   merged.requiredSelections = merged.requiredSelections || {};
+  merged.optionalSelections = merged.optionalSelections || {};
   if (!merged.semesterStart || !merged.semesterEnd) {
     Object.assign(merged, defaultSemesterRange());
   }
@@ -112,6 +138,8 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalize(JSON.parse(raw));
+    const v2 = localStorage.getItem(V2_STORAGE_KEY);
+    if (v2) return normalize(migrateV2(JSON.parse(v2)));
     const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (legacy) return normalize(migrateV1(JSON.parse(legacy)));
     return defaultState();
@@ -130,43 +158,42 @@ function clearState() {
 }
 
 function exampleState() {
-  const mk = (code, name, categoryId, sections, instructor) => ({
-    id: uid(), code, name, categoryId, instructor, color: '', sections: sections.map(s => ({ id: uid(), ...s })),
+  const mk = (code, name, categoryIds, sections, instructor) => ({
+    id: uid(), code, name, categoryIds, instructor, color: '', sections: sections.map(s => ({ id: uid(), ...s })),
   });
 
   const state = defaultState();
-  const aiBucket = { id: uid(), name: 'AI/Systems Electives', mode: 'bucket', target: 1, pool: [] };
-  const humBucket = { id: uid(), name: 'Humanities Elective', mode: 'bucket', target: 1, pool: [] };
-  state.categories = [state.categories[0], aiBucket, humBucket];
+  const aiBucket = { id: uid(), name: 'AI Electives', mode: 'bucket', target: 1, pool: [] };
+  const sysBucket = { id: uid(), name: 'Systems Electives', mode: 'bucket', target: 1, pool: [] };
+  const funBucket = { id: uid(), name: 'Just for fun', mode: 'optional' };
+  state.categories = [state.categories[0], aiBucket, sysBucket, funBucket];
 
   const courses = [
-    mk('CS301', 'Algorithms', DEFAULT_CORE_CATEGORY_ID, [
+    mk('CS301', 'Algorithms', [DEFAULT_CORE_CATEGORY_ID], [
       { label: '01', days: ['Mon', 'Wed'], start: '09:00', end: '10:15', location: 'Rm 101' },
     ], 'Dr. Novak'),
-    mk('CS310', 'Operating Systems', DEFAULT_CORE_CATEGORY_ID, [
+    mk('CS310', 'Operating Systems', [DEFAULT_CORE_CATEGORY_ID], [
       { label: '01', days: ['Tue', 'Thu'], start: '11:00', end: '12:15', location: 'Rm 204' },
     ], 'Dr. Patel'),
-    mk('CS412', 'Machine Learning', aiBucket.id, [
+    // Cross-listed: counts toward both the AI and Systems buckets at once if chosen.
+    mk('CS412', 'Machine Learning', [aiBucket.id, sysBucket.id], [
       { label: '01', days: ['Mon', 'Wed'], start: '10:30', end: '11:45', location: 'Rm 305' },
       { label: '02', days: ['Tue', 'Thu'], start: '14:00', end: '15:15', location: 'Rm 305' },
     ], 'Dr. Ibarra'),
-    mk('CS420', 'Computer Graphics', aiBucket.id, [
+    mk('CS420', 'Computer Graphics', [aiBucket.id], [
       { label: '01', days: ['Mon', 'Wed'], start: '13:00', end: '14:15', location: 'Rm 118' },
     ], 'Dr. Lund'),
-    mk('CS430', 'Distributed Systems', aiBucket.id, [
+    mk('CS430', 'Distributed Systems', [sysBucket.id], [
       { label: '01', days: ['Tue', 'Thu'], start: '09:30', end: '10:45', location: 'Rm 220' },
       { label: '02', days: ['Fri'], start: '09:00', end: '11:45', location: 'Rm 220' },
     ], 'Dr. Zhou'),
-    mk('HUM210', 'Philosophy of Technology', humBucket.id, [
+    mk('HUM210', 'Philosophy of Technology', [funBucket.id], [
       { label: '01', days: ['Wed'], start: '15:00', end: '17:45', location: 'Rm 150' },
     ], 'Dr. Okafor'),
-    mk('HUM240', 'History of Science', humBucket.id, [
-      { label: '01', days: ['Mon', 'Wed', 'Fri'], start: '14:00', end: '14:50', location: 'Rm 140' },
-    ], 'Dr. Reyes'),
   ];
   courses.forEach((c, i) => { c.color = COLOR_PALETTE[i % COLOR_PALETTE.length]; });
   state.courses = courses;
-  aiBucket.pool = courses.filter(c => c.categoryId === aiBucket.id).map(c => c.id);
-  humBucket.pool = courses.filter(c => c.categoryId === humBucket.id).map(c => c.id);
+  aiBucket.pool = courses.filter(c => c.categoryIds.includes(aiBucket.id)).map(c => c.id);
+  sysBucket.pool = courses.filter(c => c.categoryIds.includes(sysBucket.id)).map(c => c.id);
   return state;
 }

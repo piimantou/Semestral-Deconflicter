@@ -2,7 +2,7 @@
 // All persistent data lives in `state` (see storage.js) and is saved after every mutation.
 
 let state = loadState();
-let previewPicks = null; // transient: a result being previewed from the elective list (not yet pinned)
+let previewPicks = null; // transient: a result being previewed from the results list (not yet pinned)
 let lastSearch = null; // last generateCombinations() output, kept so re-render doesn't require re-search
 
 const el = (sel, root = document) => root.querySelector(sel);
@@ -12,23 +12,34 @@ function persist() {
   saveState(state);
 }
 
-function coreCourses() {
-  return state.courses.filter(c => c.type === 'core');
+// ---------- Category / course helpers ----------
+
+function categoryById(id) {
+  return state.categories.find(c => c.id === id);
 }
-function electiveCourses() {
-  return state.courses.filter(c => c.type === 'elective');
+function requiredCategories() {
+  return state.categories.filter(c => c.mode === 'required');
+}
+function bucketCategoryDefs() {
+  return state.categories.filter(c => c.mode === 'bucket');
+}
+function coursesInCategory(catId) {
+  return state.courses.filter(c => c.categoryId === catId);
+}
+function requiredCourses() {
+  const ids = new Set(requiredCategories().map(c => c.id));
+  return state.courses.filter(c => ids.has(c.categoryId));
 }
 
-function chosenCoreSection(course) {
-  if (!state.coreSelections) state.coreSelections = {};
-  const sectionId = state.coreSelections[course.id];
+function chosenRequiredSection(course) {
+  const sectionId = state.requiredSelections[course.id];
   return course.sections.find(s => s.id === sectionId) || course.sections[0] || null;
 }
 
-function corePicks() {
-  return coreCourses()
+function requiredPicks() {
+  return requiredCourses()
     .map(c => {
-      const section = chosenCoreSection(c);
+      const section = chosenRequiredSection(c);
       return section ? { course: c, section } : null;
     })
     .filter(Boolean);
@@ -37,7 +48,9 @@ function corePicks() {
 // ---------- Rendering: course list ----------
 
 function courseCardHtml(course) {
-  const badge = course.type === 'core' ? 'Core (required)' : 'Elective';
+  const category = categoryById(course.categoryId);
+  const badgeLabel = category ? category.name : 'Uncategorized';
+  const badgeClass = category && category.mode === 'required' ? 'type-required' : 'type-bucket';
   const sectionsHtml = course.sections.map(s => {
     const days = s.days.join(' ');
     return `<li class="section-row">
@@ -47,12 +60,11 @@ function courseCardHtml(course) {
     </li>`;
   }).join('');
 
-  let coreSelector = '';
-  if (course.type === 'core' && course.sections.length > 1) {
+  let requiredSelector = '';
+  if (category && category.mode === 'required' && course.sections.length > 1) {
     const options = course.sections.map(s => `<option value="${s.id}">${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('');
-    const current = chosenCoreSection(course)?.id || '';
-    coreSelector = `<label class="core-select-label">Section used:
-      <select class="core-section-select" data-course-id="${course.id}">${options}</select>
+    requiredSelector = `<label class="core-select-label">Section used:
+      <select class="required-section-select" data-course-id="${course.id}">${options}</select>
     </label>`;
   }
 
@@ -61,7 +73,7 @@ function courseCardHtml(course) {
       <div>
         <span class="course-code">${escapeHtml(course.code || '')}</span>
         <span class="course-name">${escapeHtml(course.name)}</span>
-        <span class="type-badge type-${course.type}">${badge}</span>
+        <span class="type-badge ${badgeClass}">${escapeHtml(badgeLabel)}</span>
       </div>
       <div class="course-card-actions">
         <button class="btn btn-small btn-edit" data-action="edit-course" data-course-id="${course.id}">Edit</button>
@@ -69,7 +81,7 @@ function courseCardHtml(course) {
       </div>
     </div>
     ${course.instructor ? `<div class="course-instructor">${escapeHtml(course.instructor)}</div>` : ''}
-    ${coreSelector}
+    ${requiredSelector}
     <ul class="section-list">${sectionsHtml || '<li class="section-row section-empty">No sections yet</li>'}</ul>
   </div>`;
 }
@@ -77,22 +89,29 @@ function courseCardHtml(course) {
 function renderCourseList() {
   const list = el('#course-list');
   if (state.courses.length === 0) {
-    list.innerHTML = `<p class="empty-hint">No courses yet. Add your core (required) courses first, then add electives you're considering.</p>`;
+    list.innerHTML = `<p class="empty-hint">No courses yet. Add your required courses first, then add electives to whichever bucket categories they belong to.</p>`;
     return;
   }
-  const core = coreCourses();
-  const electives = electiveCourses();
   let html = '';
-  if (core.length) html += `<h3 class="course-group-heading">Core</h3>` + core.map(courseCardHtml).join('');
-  if (electives.length) html += `<h3 class="course-group-heading">Electives</h3>` + electives.map(courseCardHtml).join('');
+  for (const category of state.categories) {
+    const courses = coursesInCategory(category.id);
+    if (!courses.length) continue;
+    const modeLabel = category.mode === 'required' ? 'required' : `bucket, take ${category.target}`;
+    html += `<h3 class="course-group-heading">${escapeHtml(category.name)} <span class="course-group-mode">(${modeLabel})</span></h3>` + courses.map(courseCardHtml).join('');
+  }
+  const uncategorized = state.courses.filter(c => !categoryById(c.categoryId));
+  if (uncategorized.length) {
+    html += `<h3 class="course-group-heading">Uncategorized</h3>` + uncategorized.map(courseCardHtml).join('');
+  }
   list.innerHTML = html;
 }
 
-// ---------- Rendering: calendar ----------
+// ---------- Rendering: calendar (When2Meet-inspired grid) ----------
 
-const RANGE_START = 7 * 60; // 07:00
-const RANGE_END = 21 * 60; // 21:00
-const PX_PER_MIN = 1;
+const DEFAULT_RANGE_START = 7 * 60; // 07:00
+const DEFAULT_RANGE_END = 21 * 60; // 21:00
+const SLOT_MINUTES = 30;
+const ROW_HEIGHT = 22; // px per 30-minute slot
 
 function calendarDays() {
   return state.showWeekend ? DAY_ORDER : DAY_ORDER.slice(0, 5);
@@ -100,26 +119,29 @@ function calendarDays() {
 
 function renderCalendar(picks) {
   const days = calendarDays();
-  let minStart = RANGE_START, maxEnd = RANGE_END;
+  let minStart = DEFAULT_RANGE_START, maxEnd = DEFAULT_RANGE_END;
   for (const { section } of picks) {
     minStart = Math.min(minStart, timeToMinutes(section.start));
     maxEnd = Math.max(maxEnd, timeToMinutes(section.end));
   }
-  const totalMin = maxEnd - minStart;
-  const height = totalMin * PX_PER_MIN;
+  minStart = Math.floor(minStart / 60) * 60;
+  maxEnd = Math.ceil(maxEnd / 60) * 60;
+  const numSlots = (maxEnd - minStart) / SLOT_MINUTES;
+  const pxPerMin = ROW_HEIGHT / SLOT_MINUTES;
+  const height = numSlots * ROW_HEIGHT;
 
-  const hourLines = [];
-  for (let t = Math.ceil(minStart / 60) * 60; t <= maxEnd; t += 60) {
-    const top = (t - minStart) * PX_PER_MIN;
-    hourLines.push(`<div class="hour-line" style="top:${top}px"><span>${formatMinutes(t)}</span></div>`);
+  const gutterCells = [];
+  for (let t = minStart; t <= maxEnd; t += 60) {
+    const top = (t - minStart) * pxPerMin;
+    gutterCells.push(`<div class="hour-label" style="top:${top}px">${formatMinutes(t)}</div>`);
   }
 
   const dayColumns = days.map(day => {
     const blocks = picks
       .filter(p => p.section.days.includes(day))
       .map(p => {
-        const top = (timeToMinutes(p.section.start) - minStart) * PX_PER_MIN;
-        const h = (timeToMinutes(p.section.end) - timeToMinutes(p.section.start)) * PX_PER_MIN;
+        const top = (timeToMinutes(p.section.start) - minStart) * pxPerMin;
+        const h = (timeToMinutes(p.section.end) - timeToMinutes(p.section.start)) * pxPerMin;
         return `<div class="cal-block" style="top:${top}px;height:${h}px;background:${p.course.color}" title="${escapeHtml(p.course.name)}">
           <div class="cal-block-title">${escapeHtml(p.course.code || p.course.name)}</div>
           <div class="cal-block-meta">${p.section.start}&ndash;${p.section.end}${p.section.location ? '<br>' + escapeHtml(p.section.location) : ''}</div>
@@ -129,13 +151,15 @@ function renderCalendar(picks) {
   }).join('');
 
   el('#calendar').innerHTML = `
-    <div class="cal-header-row">
-      <div class="cal-gutter"></div>
-      ${days.map(d => `<div class="cal-day-header">${d}</div>`).join('')}
-    </div>
-    <div class="cal-body" style="height:${height}px">
-      <div class="cal-gutter">${hourLines.join('')}</div>
-      <div class="cal-grid" style="grid-template-columns:repeat(${days.length},1fr)">${dayColumns}</div>
+    <div class="cal-scroll">
+      <div class="cal-header-row" style="grid-template-columns:56px repeat(${days.length},1fr)">
+        <div class="cal-gutter-header"></div>
+        ${days.map(d => `<div class="cal-day-header">${d}</div>`).join('')}
+      </div>
+      <div class="cal-body" style="height:${height}px;grid-template-columns:56px repeat(${days.length},1fr)">
+        <div class="cal-gutter" style="height:${height}px">${gutterCells.join('')}</div>
+        <div class="cal-grid" style="height:${height}px;background-size:100% ${ROW_HEIGHT}px, 100% ${ROW_HEIGHT * 2}px;grid-template-columns:repeat(${days.length},1fr)">${dayColumns}</div>
+      </div>
     </div>`;
 }
 
@@ -143,7 +167,7 @@ function renderCalendar(picks) {
 
 function updateConflictBanner() {
   const banner = el('#conflict-banner');
-  const conflicts = findConflicts(corePicks());
+  const conflicts = findConflicts(requiredPicks());
   if (conflicts.length === 0) {
     banner.hidden = true;
     banner.innerHTML = '';
@@ -153,29 +177,40 @@ function updateConflictBanner() {
   const items = conflicts.map(([a, b]) =>
     `<li>${escapeHtml(a.course.name)} (${a.section.label}) overlaps ${escapeHtml(b.course.name)} (${b.section.label})</li>`
   ).join('');
-  banner.innerHTML = `<strong>Your core courses conflict with each other</strong> — fix these before electives can be deconflicted:<ul>${items}</ul>`;
+  banner.innerHTML = `<strong>Your required courses conflict with each other</strong> — fix these before electives can be deconflicted:<ul>${items}</ul>`;
 }
 
-// ---------- Elective pool + results ----------
+// ---------- Bucket planner + results ----------
 
-function renderElectivePool() {
-  const pool = el('#elective-pool');
-  const electives = electiveCourses();
-  if (electives.length === 0) {
-    pool.innerHTML = `<p class="empty-hint">Add elective courses above to start deconflicting.</p>`;
+function renderBucketPanel() {
+  const container = el('#bucket-panel');
+  const buckets = bucketCategoryDefs();
+  if (buckets.length === 0) {
+    container.innerHTML = `<p class="empty-hint">No bucket categories yet. Use "Categories" to add one (e.g. "AI Electives, choose 2"), then assign courses to it.</p>`;
     return;
   }
-  if (!state.electivePool || state.electivePool.length === 0) {
-    state.electivePool = electives.map(c => c.id);
-  }
-  pool.innerHTML = `<p class="pool-label">Consider these electives:</p>` + electives.map(c => {
-    const checked = state.electivePool.includes(c.id) ? 'checked' : '';
-    return `<label class="pool-item">
-      <input type="checkbox" class="elective-pool-check" data-course-id="${c.id}" ${checked} />
-      <span class="section-swatch" style="background:${c.color}"></span>
-      ${escapeHtml(c.code ? c.code + ' — ' : '')}${escapeHtml(c.name)}
-      <span class="pool-item-sections">(${c.sections.length} section${c.sections.length === 1 ? '' : 's'})</span>
-    </label>`;
+  container.innerHTML = buckets.map(cat => {
+    const courses = coursesInCategory(cat.id);
+    if (!cat.pool) cat.pool = courses.map(c => c.id);
+    const items = courses.map(c => {
+      const checked = cat.pool.includes(c.id) ? 'checked' : '';
+      return `<label class="pool-item">
+        <input type="checkbox" class="bucket-pool-check" data-category-id="${cat.id}" data-course-id="${c.id}" ${checked} />
+        <span class="section-swatch" style="background:${c.color}"></span>
+        ${escapeHtml(c.code ? c.code + ' — ' : '')}${escapeHtml(c.name)}
+        <span class="pool-item-sections">(${c.sections.length} section${c.sections.length === 1 ? '' : 's'})</span>
+      </label>`;
+    }).join('') || `<p class="empty-hint">No courses assigned to this category yet.</p>`;
+
+    return `<div class="bucket-block" data-category-id="${cat.id}">
+      <div class="bucket-block-header">
+        <strong>${escapeHtml(cat.name)}</strong>
+        <label class="bucket-target-label">take
+          <input type="number" class="bucket-target-input" data-category-id="${cat.id}" min="0" max="${courses.length}" value="${cat.target}" />
+        </label>
+      </div>
+      ${items}
+    </div>`;
   }).join('');
 }
 
@@ -189,20 +224,28 @@ function renderResults(search) {
   }
   const { results, truncated } = search;
   if (results.length === 0) {
-    summary.innerHTML = `<p class="empty-hint">No conflict-free combination found for that many electives. Try lowering the target, adding more sections, or widening the elective pool.</p>`;
+    summary.innerHTML = `<p class="empty-hint">No conflict-free combination found. Try lowering a bucket's target, adding more sections, or widening the bucket's pool.</p>`;
     list.innerHTML = '';
     return;
   }
-  summary.innerHTML = `<p>${results.length} valid combination${results.length === 1 ? '' : 's'} found${truncated ? ' (search truncated — narrow your elective pool for a full search)' : ''}. Showing top ${Math.min(50, results.length)}.</p>`;
+  summary.innerHTML = `<p>${results.length} valid combination${results.length === 1 ? '' : 's'} found${truncated ? ' (search truncated — narrow your bucket pools for a full search)' : ''}. Showing top ${Math.min(50, results.length)}.</p>`;
 
   list.innerHTML = results.slice(0, 50).map((r, i) => {
-    const electivePicks = r.picks.filter(p => p.course.type === 'elective');
-    const names = electivePicks.map(p => `${escapeHtml(p.course.code || p.course.name)} (${escapeHtml(p.section.label)})`).join(', ');
+    const electivePicks = r.picks.filter(p => {
+      const cat = categoryById(p.course.categoryId);
+      return cat && cat.mode === 'bucket';
+    });
+    const byCategory = {};
+    for (const p of electivePicks) {
+      const cat = categoryById(p.course.categoryId);
+      (byCategory[cat.id] = byCategory[cat.id] || { name: cat.name, picks: [] }).picks.push(p);
+    }
+    const groupsHtml = Object.values(byCategory).map(g =>
+      `<span class="result-group"><em>${escapeHtml(g.name)}:</em> ${g.picks.map(p => `${escapeHtml(p.course.code || p.course.name)} (${escapeHtml(p.section.label)})`).join(', ')}</span>`
+    ).join(' ');
     const m = r.metrics;
     return `<div class="result-card" data-result-index="${i}">
-      <div class="result-main">
-        <strong>#${i + 1}</strong> ${names || '<em>no electives</em>'}
-      </div>
+      <div class="result-main"><strong>#${i + 1}</strong> ${groupsHtml || '<em>no electives</em>'}</div>
       <div class="result-metrics">
         ${m.daysUsedCount} day${m.daysUsedCount === 1 ? '' : 's'} on campus &middot;
         ${formatMinutes(m.earliestStart)}&ndash;${formatMinutes(m.latestEnd)} &middot;
@@ -219,19 +262,19 @@ function renderResults(search) {
 // ---------- Actions ----------
 
 function runGeneration() {
-  const target = parseInt(el('#elective-target').value, 10) || 0;
-  state.electiveTarget = target;
   const sortMode = el('#sort-mode').value;
   state.sortMode = sortMode;
   persist();
 
-  const pool = electiveCourses().filter(c => state.electivePool.includes(c.id));
-  // Lock each core course to its currently chosen section so the search doesn't
-  // second-guess a mandatory course's schedule while placing electives around it.
-  const fixedCore = corePicks().map(p => ({ ...p.course, sections: [p.section] }));
-  const search = generateCombinations(fixedCore, pool, target, sortMode);
-  lastSearch = search;
-  renderResults(search);
+  const fixedRequired = requiredPicks().map(p => ({ ...p.course, sections: [p.section] }));
+  const buckets = bucketCategoryDefs().map(cat => ({
+    id: cat.id,
+    name: cat.name,
+    target: cat.target,
+    courses: coursesInCategory(cat.id).filter(c => (cat.pool || []).includes(c.id)),
+  }));
+  lastSearch = generateCombinations(fixedRequired, buckets, sortMode);
+  renderResults(lastSearch);
 }
 
 function applyPreview(index) {
@@ -266,15 +309,103 @@ function currentDisplayPicks() {
     }
     if (picks.length) return picks;
   }
-  return corePicks();
+  return requiredPicks();
 }
 
 function refreshAll() {
   renderCourseList();
-  renderElectivePool();
+  renderBucketPanel();
   updateConflictBanner();
   renderCalendar(currentDisplayPicks());
   renderResults(lastSearch);
+}
+
+// ---------- Category manager modal ----------
+
+function openCategoryModal() {
+  const root = el('#modal-root');
+  const rows = () => state.categories.map(cat => {
+    const count = coursesInCategory(cat.id).length;
+    const modeText = cat.mode === 'required' ? 'Required' : `Bucket (take ${cat.target})`;
+    return `<div class="category-row" data-category-id="${cat.id}">
+      <span class="category-row-name">${escapeHtml(cat.name)}</span>
+      <span class="category-row-mode">${modeText}</span>
+      <span class="category-row-count">${count} course${count === 1 ? '' : 's'}</span>
+      <button type="button" class="btn btn-small btn-danger" data-action="delete-category" data-category-id="${cat.id}">Delete</button>
+    </div>`;
+  }).join('');
+
+  root.innerHTML = `
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <h2>Categories</h2>
+      <p class="modal-hint">Every course belongs to one category. A <strong>required</strong> category means every course in it is mandatory. A <strong>bucket</strong> category means you're choosing a fixed number of courses out of the ones assigned to it.</p>
+      <div id="category-rows">${rows()}</div>
+      <h3>Add category</h3>
+      <form id="category-form">
+        <div class="form-row">
+          <label>Name<input type="text" name="name" required placeholder="e.g. AI Electives" /></label>
+          <label class="radio-label"><input type="radio" name="mode" value="required" checked /> Required</label>
+          <label class="radio-label"><input type="radio" name="mode" value="bucket" /> Bucket</label>
+          <label id="target-field">Take how many?<input type="number" name="target" min="0" value="1" /></label>
+        </div>
+        <p class="form-error" id="category-form-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="btn-close-category-modal">Close</button>
+          <button type="submit" class="btn btn-primary">Add category</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+
+  const updateTargetVisibility = () => {
+    const mode = el('input[name="mode"]:checked', root).value;
+    el('#target-field').style.display = mode === 'bucket' ? 'flex' : 'none';
+  };
+  updateTargetVisibility();
+  els('input[name="mode"]', root).forEach(r => r.addEventListener('change', updateTargetVisibility));
+
+  root.addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay' || e.target.id === 'btn-close-category-modal') closeModal();
+    const delBtn = e.target.closest('[data-action="delete-category"]');
+    if (delBtn) deleteCategory(delBtn.dataset.categoryId);
+  });
+
+  el('#category-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const name = form.name.value.trim();
+    const mode = form.mode.value;
+    const target = parseInt(form.target.value, 10) || 0;
+    const errorEl = el('#category-form-error');
+    if (!name) { errorEl.hidden = false; errorEl.textContent = 'Name is required.'; return; }
+    if (state.categories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+      errorEl.hidden = false; errorEl.textContent = 'A category with that name already exists.'; return;
+    }
+    const category = { id: uid(), name, mode };
+    if (mode === 'bucket') { category.target = target; category.pool = []; }
+    state.categories.push(category);
+    persist();
+    openCategoryModal(); // re-render with the new row
+    refreshAll();
+  });
+}
+
+function deleteCategory(categoryId) {
+  const inUse = coursesInCategory(categoryId);
+  if (inUse.length) {
+    alert(`Can't delete "${categoryById(categoryId).name}" — ${inUse.length} course(s) still use it. Reassign or delete those courses first.`);
+    return;
+  }
+  if (state.categories.length <= 1) {
+    alert("You need at least one category.");
+    return;
+  }
+  if (!confirm(`Delete category "${categoryById(categoryId).name}"?`)) return;
+  state.categories = state.categories.filter(c => c.id !== categoryId);
+  persist();
+  openCategoryModal();
+  refreshAll();
 }
 
 // ---------- Course modal ----------
@@ -283,8 +414,12 @@ const DAY_LABELS = DAY_ORDER;
 
 function openCourseModal(existing) {
   const isEdit = !!existing;
-  const course = existing || { id: null, code: '', name: '', type: 'core', instructor: '', sections: [] };
+  const course = existing || { id: null, code: '', name: '', categoryId: state.categories[0]?.id, instructor: '', sections: [] };
   const sections = course.sections.length ? course.sections : [{ id: null, label: 'Section 01', days: [], start: '09:00', end: '10:15', location: '' }];
+
+  const categoryOptions = state.categories.map(cat =>
+    `<option value="${cat.id}" ${cat.id === course.categoryId ? 'selected' : ''}>${escapeHtml(cat.name)} (${cat.mode === 'required' ? 'Required' : 'Bucket'})</option>`
+  ).join('');
 
   const root = el('#modal-root');
   root.innerHTML = `
@@ -297,8 +432,9 @@ function openCourseModal(existing) {
           <label>Name<input type="text" name="name" value="${escapeAttr(course.name)}" required placeholder="Algorithms" /></label>
         </div>
         <div class="form-row">
-          <label class="radio-label"><input type="radio" name="type" value="core" ${course.type === 'core' ? 'checked' : ''}/> Core (required)</label>
-          <label class="radio-label"><input type="radio" name="type" value="elective" ${course.type === 'elective' ? 'checked' : ''}/> Elective</label>
+          <label>Category
+            <select name="categoryId">${categoryOptions}</select>
+          </label>
           <label>Instructor<input type="text" name="instructor" value="${escapeAttr(course.instructor || '')}" /></label>
         </div>
         <h3>Sections</h3>
@@ -351,7 +487,7 @@ function saveCourseFromForm(existingId) {
   const form = el('#course-form');
   const code = form.code.value.trim();
   const name = form.name.value.trim();
-  const type = form.type.value;
+  const categoryId = form.categoryId.value;
   const instructor = form.instructor.value.trim();
   const errorEl = el('#form-error');
 
@@ -372,17 +508,26 @@ function saveCourseFromForm(existingId) {
   if (sections.length === 0) { errorEl.hidden = false; errorEl.textContent = 'Add at least one section.'; return; }
   if (!name) { errorEl.hidden = false; errorEl.textContent = 'Course name is required.'; return; }
 
+  let savedCourse;
   if (existingId) {
     const idx = state.courses.findIndex(c => c.id === existingId);
     const prev = state.courses[idx];
-    state.courses[idx] = { ...prev, code, name, type, instructor, sections };
+    savedCourse = { ...prev, code, name, categoryId, instructor, sections };
+    state.courses[idx] = savedCourse;
   } else {
-    state.courses.push({ id: uid(), code, name, type, instructor, color: nextColor(state.courses), sections });
+    savedCourse = { id: uid(), code, name, categoryId, instructor, color: nextColor(state.courses), sections };
+    state.courses.push(savedCourse);
   }
-  if (!state.electivePool) state.electivePool = [];
-  if (type === 'elective') {
-    const added = existingId ? state.courses.find(c => c.id === existingId) : state.courses[state.courses.length - 1];
-    if (!state.electivePool.includes(added.id)) state.electivePool.push(added.id);
+
+  // Keep bucket pools in sync: a course newly assigned to a bucket category
+  // defaults to "considered"; remove it from pools of categories it no longer belongs to.
+  for (const cat of bucketCategoryDefs()) {
+    if (!cat.pool) cat.pool = [];
+    if (cat.id === categoryId) {
+      if (!cat.pool.includes(savedCourse.id)) cat.pool.push(savedCourse.id);
+    } else {
+      cat.pool = cat.pool.filter(id => id !== savedCourse.id);
+    }
   }
 
   persist();
@@ -398,9 +543,11 @@ function closeModal() {
 function deleteCourse(courseId) {
   if (!confirm('Delete this course and all its sections?')) return;
   state.courses = state.courses.filter(c => c.id !== courseId);
-  if (state.electivePool) state.electivePool = state.electivePool.filter(id => id !== courseId);
+  for (const cat of bucketCategoryDefs()) {
+    if (cat.pool) cat.pool = cat.pool.filter(id => id !== courseId);
+  }
   if (state.pinnedSchedule) delete state.pinnedSchedule[courseId];
-  if (state.coreSelections) delete state.coreSelections[courseId];
+  if (state.requiredSelections) delete state.requiredSelections[courseId];
   persist();
   lastSearch = null;
   refreshAll();
@@ -423,11 +570,10 @@ function importJson(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      state = Object.assign(defaultState(), parsed);
+      state = normalize(parsed);
       persist();
       lastSearch = null;
       previewPicks = null;
-      el('#elective-target').value = state.electiveTarget;
       el('#sort-mode').value = state.sortMode;
       el('#chk-weekend').checked = !!state.showWeekend;
       refreshAll();
@@ -448,11 +594,11 @@ function escapeAttr(str) { return escapeHtml(str); }
 // ---------- Wiring ----------
 
 function init() {
-  el('#elective-target').value = state.electiveTarget;
   el('#sort-mode').value = state.sortMode;
   el('#chk-weekend').checked = !!state.showWeekend;
 
   el('#btn-add-course').addEventListener('click', () => openCourseModal(null));
+  el('#btn-manage-categories').addEventListener('click', () => openCategoryModal());
 
   el('#course-list').addEventListener('click', (e) => {
     const editBtn = e.target.closest('[data-action="edit-course"]');
@@ -465,22 +611,28 @@ function init() {
   });
 
   el('#course-list').addEventListener('change', (e) => {
-    if (e.target.matches('.core-section-select')) {
-      if (!state.coreSelections) state.coreSelections = {};
-      state.coreSelections[e.target.dataset.courseId] = e.target.value;
+    if (e.target.matches('.required-section-select')) {
+      state.requiredSelections[e.target.dataset.courseId] = e.target.value;
       persist();
       refreshAll();
     }
   });
 
-  el('#elective-pool').addEventListener('change', (e) => {
-    if (e.target.matches('.elective-pool-check')) {
-      const id = e.target.dataset.courseId;
+  el('#bucket-panel').addEventListener('change', (e) => {
+    if (e.target.matches('.bucket-pool-check')) {
+      const cat = categoryById(e.target.dataset.categoryId);
+      const courseId = e.target.dataset.courseId;
+      if (!cat.pool) cat.pool = [];
       if (e.target.checked) {
-        if (!state.electivePool.includes(id)) state.electivePool.push(id);
+        if (!cat.pool.includes(courseId)) cat.pool.push(courseId);
       } else {
-        state.electivePool = state.electivePool.filter(x => x !== id);
+        cat.pool = cat.pool.filter(id => id !== courseId);
       }
+      persist();
+    }
+    if (e.target.matches('.bucket-target-input')) {
+      const cat = categoryById(e.target.dataset.categoryId);
+      cat.target = Math.max(0, parseInt(e.target.value, 10) || 0);
       persist();
     }
   });
@@ -509,7 +661,7 @@ function init() {
     persist();
     lastSearch = null;
     previewPicks = null;
-    el('#elective-target').value = state.electiveTarget;
+    el('#sort-mode').value = state.sortMode;
     refreshAll();
   });
 
@@ -528,7 +680,7 @@ function init() {
     state = defaultState();
     lastSearch = null;
     previewPicks = null;
-    el('#elective-target').value = state.electiveTarget;
+    el('#sort-mode').value = state.sortMode;
     refreshAll();
   });
 

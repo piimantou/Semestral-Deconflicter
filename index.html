@@ -26,7 +26,10 @@
   <section class="panel panel-courses">
     <div class="panel-header">
       <h2>Courses</h2>
-      <button id="btn-add-course" class="btn btn-primary">+ Add course</button>
+      <div class="panel-header-actions">
+        <button id="btn-manage-categories" class="btn btn-ghost">Categories</button>
+        <button id="btn-add-course" class="btn btn-primary">+ Add course</button>
+      </div>
     </div>
     <div id="course-list" class="course-list"></div>
   </section>
@@ -43,13 +46,9 @@
 
   <section class="panel panel-electives">
     <div class="panel-header">
-      <h2>Elective deconfliction</h2>
+      <h2>Bucket deconfliction</h2>
     </div>
     <div class="elective-controls">
-      <label>
-        Electives to take:
-        <input type="number" id="elective-target" min="0" value="1" />
-      </label>
       <label>
         Rank by:
         <select id="sort-mode">
@@ -61,7 +60,7 @@
       </label>
       <button id="btn-generate" class="btn btn-primary">Generate valid combinations</button>
     </div>
-    <div id="elective-pool" class="elective-pool"></div>
+    <div id="bucket-panel"></div>
     <div id="results-summary" class="results-summary"></div>
     <div id="results-list" class="results-list"></div>
   </section>

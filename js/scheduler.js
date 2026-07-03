@@ -35,6 +35,7 @@ function combinations(arr, k) {
   const results = [];
   if (k < 0) return results;
   if (k === 0) return [[]];
+  if (k > arr.length) return results;
   const backtrack = (start, chosen) => {
     if (chosen.length === k) {
       results.push(chosen.slice());
@@ -98,70 +99,79 @@ function comparatorFor(sortMode) {
   }
 }
 
-// Limits to keep the browser responsive even with a large elective pool.
+// Limits to keep the browser responsive even with several bucket categories.
 const LIMITS = {
-  maxSubsets: 3000,
-  maxNodesPerSubset: 20000,
+  maxLeaves: 4000,       // total (category-subset) combinations explored across all buckets
+  maxNodesPerLeaf: 20000, // section-assignment backtracking nodes per combination
   maxResults: 300,
 };
 
 /**
- * Generates every conflict-free way to combine all `coreCourses` (mandatory,
- * one section each) with exactly `electiveTarget` courses drawn from
- * `electivePoolCourses` (one section each).
+ * Generates every conflict-free way to combine all `requiredCourses`
+ * (mandatory, one section each) with exactly `target` courses from each
+ * of `bucketCategories` (one section each per chosen course).
  *
- * Returns { results, truncated, coreConflicts }
- *   results: [{ picks: [{course, section}], metrics }]  sorted by sortMode
- *   coreConflicts: conflicts that exist among core courses alone (unfixable by elective choice)
+ * bucketCategories: [{ id, name, target, courses: [course, ...] }]
+ *
+ * Returns { results, truncated }
+ *   results: [{ picks: [{course, section, categoryId?}], metrics }] sorted by sortMode
  */
-function generateCombinations(coreCourses, electivePoolCourses, electiveTarget, sortMode) {
-  const target = Math.max(0, Math.min(electiveTarget, electivePoolCourses.length));
-
-  // Core courses must always be included; flag unavoidable internal conflicts up front.
-  const coreConflicts = [];
-  for (const c of coreCourses) {
-    if (c.sections.length === 0) continue;
-  }
-
+function generateCombinations(requiredCourses, bucketCategories, sortMode) {
   const results = [];
   let truncated = false;
-  const subsets = combinations(electivePoolCourses, target);
-  const subsetsToProcess = subsets.slice(0, LIMITS.maxSubsets);
-  if (subsets.length > LIMITS.maxSubsets) truncated = true;
+  let leaves = 0;
 
-  for (const electiveSubset of subsetsToProcess) {
-    const courseList = coreCourses.concat(electiveSubset).filter(c => c.sections.length > 0);
-    if (courseList.length === 0) continue;
+  const subsetsPerCategory = bucketCategories.map(cat => {
+    const target = Math.max(0, Math.min(cat.target, cat.courses.length));
+    return combinations(cat.courses, target);
+  });
 
+  const runBacktrack = (courseList) => {
+    if (results.length >= LIMITS.maxResults) return true;
     let nodes = 0;
     const picks = [];
-
     const backtrack = (idx) => {
-      if (results.length >= LIMITS.maxResults) return true; // signal stop
-      if (nodes++ > LIMITS.maxNodesPerSubset) { truncated = true; return true; }
+      if (results.length >= LIMITS.maxResults) return true;
+      if (nodes++ > LIMITS.maxNodesPerLeaf) { truncated = true; return true; }
       if (idx === courseList.length) {
         results.push({ picks: picks.slice(), metrics: scheduleMetrics(picks) });
         return false;
       }
       const course = courseList[idx];
       for (const section of course.sections) {
-        const candidate = { course, section };
         const conflict = picks.some(p => sectionsOverlap(p.section, section));
         if (conflict) continue;
-        picks.push(candidate);
+        picks.push({ course, section });
         const stop = backtrack(idx + 1);
         picks.pop();
         if (stop) return true;
       }
       return false;
     };
+    return backtrack(0);
+  };
 
-    const stop = backtrack(0);
-    if (stop && results.length >= LIMITS.maxResults) { truncated = true; break; }
-  }
+  // Cartesian product across bucket categories' subsets, explored lazily via recursion
+  // so we never materialize the full product up front.
+  const walkCategories = (catIdx, chosenElectives) => {
+    if (results.length >= LIMITS.maxResults) return true;
+    if (catIdx === subsetsPerCategory.length) {
+      leaves++;
+      if (leaves > LIMITS.maxLeaves) { truncated = true; return true; }
+      const courseList = requiredCourses.concat(chosenElectives).filter(c => c.sections.length > 0);
+      return runBacktrack(courseList);
+    }
+    for (const subset of subsetsPerCategory[catIdx]) {
+      const stop = walkCategories(catIdx + 1, chosenElectives.concat(subset));
+      if (stop) return true;
+    }
+    return false;
+  };
+
+  walkCategories(0, []);
 
   results.sort(comparatorFor(sortMode));
-  return { results, truncated, coreConflicts };
+  return { results, truncated };
 }
 
 function formatMinutes(mins) {

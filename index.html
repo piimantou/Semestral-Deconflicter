@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Semestral Deconflicter</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <h1>Semestral Deconflicter</h1>
+  <div class="topbar-actions">
+    <button id="btn-load-example" class="btn btn-ghost">Load example</button>
+    <button id="btn-export" class="btn btn-ghost">Export JSON</button>
+    <button id="btn-import" class="btn btn-ghost">Import JSON</button>
+    <input type="file" id="file-import" accept="application/json" hidden />
+    <button id="btn-print" class="btn btn-ghost">Print schedule</button>
+    <button id="btn-clear-all" class="btn btn-danger">Clear all</button>
+  </div>
+</header>
+
+<div id="conflict-banner" class="banner banner-error" hidden></div>
+
+<main class="layout">
+  <section class="panel panel-courses">
+    <div class="panel-header">
+      <h2>Courses</h2>
+      <button id="btn-add-course" class="btn btn-primary">+ Add course</button>
+    </div>
+    <div id="course-list" class="course-list"></div>
+  </section>
+
+  <section class="panel panel-calendar">
+    <div class="panel-header">
+      <h2>Weekly view</h2>
+      <div class="calendar-controls">
+        <label class="inline-check"><input type="checkbox" id="chk-weekend" /> Show weekend</label>
+      </div>
+    </div>
+    <div id="calendar" class="calendar"></div>
+  </section>
+
+  <section class="panel panel-electives">
+    <div class="panel-header">
+      <h2>Elective deconfliction</h2>
+    </div>
+    <div class="elective-controls">
+      <label>
+        Electives to take:
+        <input type="number" id="elective-target" min="0" value="1" />
+      </label>
+      <label>
+        Rank by:
+        <select id="sort-mode">
+          <option value="compact">Fewest days on campus</option>
+          <option value="leastIdle">Least idle time between classes</option>
+          <option value="earlyFinish">Earliest finish each day</option>
+          <option value="lateStart">Latest start each day (sleep in)</option>
+        </select>
+      </label>
+      <button id="btn-generate" class="btn btn-primary">Generate valid combinations</button>
+    </div>
+    <div id="elective-pool" class="elective-pool"></div>
+    <div id="results-summary" class="results-summary"></div>
+    <div id="results-list" class="results-list"></div>
+  </section>
+</main>
+
+<div id="modal-root"></div>
+
+<script src="js/storage.js"></script>
+<script src="js/scheduler.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

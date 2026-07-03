@@ -537,6 +537,7 @@ function applyPreview(index) {
   const result = lastSearch.results[index];
   if (!result) return;
   previewPicks = result.picks;
+  updatePinnedBanner();
   renderCalendar(previewPicks);
 }
 
@@ -549,6 +550,7 @@ function pinResult(index) {
   state.pinnedSchedule = map;
   previewPicks = null;
   persist();
+  updatePinnedBanner();
   renderCalendar(result.picks);
 }
 
@@ -565,6 +567,38 @@ function currentDisplayPicks() {
     if (picks.length) return picks;
   }
   return lockedPicks().concat(bucketPreviewPicks());
+}
+
+// A pinned schedule (or an unpinned preview) is a frozen snapshot — once
+// set, currentDisplayPicks() shows only that, ignoring any later changes
+// to required/optional/bucket selections. Anything that changes those
+// selections must call this first or the calendar will silently keep
+// showing stale data instead of reflecting the edit.
+function clearPinnedView() {
+  state.pinnedSchedule = null;
+  previewPicks = null;
+}
+
+function unpinSchedule() {
+  clearPinnedView();
+  persist();
+  refreshAll();
+}
+
+function updatePinnedBanner() {
+  const banner = el('#pinned-banner');
+  if (previewPicks) {
+    banner.hidden = false;
+    banner.innerHTML = `Previewing a generated combination — it's not saved unless you click <strong>Pin to calendar</strong>. <button type="button" class="btn btn-small" id="btn-back-to-live">Back to live view</button>`;
+    return;
+  }
+  if (state.pinnedSchedule) {
+    banner.hidden = false;
+    banner.innerHTML = `<strong>Showing a pinned schedule.</strong> Changes to required/optional/bucket selections won't appear here until you unpin. <button type="button" class="btn btn-small" id="btn-unpin">Unpin</button>`;
+    return;
+  }
+  banner.hidden = true;
+  banner.innerHTML = '';
 }
 
 const NARROW_LAYOUT_QUERY = '(max-width: 1100px)';
@@ -589,6 +623,7 @@ function refreshAll() {
   renderBucketPanel();
   renderOptionalPanel();
   updateConflictBanner();
+  updatePinnedBanner();
   renderCalendar(currentDisplayPicks());
   renderResults(lastSearch);
   syncCoursesPanelHeight();
@@ -962,6 +997,7 @@ function init() {
   el('#course-list').addEventListener('change', (e) => {
     if (e.target.matches('.required-section-select')) {
       state.requiredSelections[e.target.dataset.courseId] = e.target.value;
+      clearPinnedView();
       persist();
       refreshAll();
     }
@@ -977,16 +1013,16 @@ function init() {
       } else {
         cat.pool = cat.pool.filter(id => id !== courseId);
       }
+      clearPinnedView();
       persist();
       lastSearch = null;
-      previewPicks = null;
       refreshAll();
     }
     if (e.target.matches('.pool-section-select')) {
       state.poolSectionSelections[e.target.dataset.courseId] = e.target.value;
+      clearPinnedView();
       persist();
       lastSearch = null;
-      previewPicks = null;
       refreshAll();
     }
     if (e.target.matches('.bucket-target-input')) {
@@ -1007,14 +1043,24 @@ function init() {
       } else {
         delete state.optionalSelections[courseId];
       }
+      clearPinnedView();
       persist();
       lastSearch = null;
       refreshAll();
     }
     if (e.target.matches('.optional-section-select')) {
       state.optionalSelections[courseId] = e.target.value;
+      clearPinnedView();
       persist();
       lastSearch = null;
+      refreshAll();
+    }
+  });
+
+  el('#pinned-banner').addEventListener('click', (e) => {
+    if (e.target.id === 'btn-unpin') unpinSchedule();
+    if (e.target.id === 'btn-back-to-live') {
+      previewPicks = null;
       refreshAll();
     }
   });

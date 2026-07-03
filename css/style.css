@@ -72,6 +72,20 @@ h1, h2, h3 { margin: 0 0 8px; }
   border-bottom: 1px solid var(--danger);
 }
 .banner ul { margin: 6px 0 0 20px; }
+.banner-info {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* display:flex must not apply while [hidden] is set, or it overrides the
+   browser's default [hidden]{display:none} (same specificity, later wins). */
+.banner-info:not([hidden]) { display: flex; }
 
 .layout {
   display: grid;

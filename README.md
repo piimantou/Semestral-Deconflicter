@@ -3,8 +3,23 @@
 A small, no-build web app for planning a semester schedule and figuring out
 which combination of electives you can actually take without time conflicts.
 
-**Live:** https://piimantou.github.io/Semestral-Deconflicter/ (deployed via
-GitHub Pages from this branch — see `.github/workflows/deploy-pages.yml`)
+**Live:** https://piimantou.github.io/Semestral-Deconflicter/ once GitHub
+Pages is enabled (one-time step — see below). Deploys automatically on every
+push via `.github/workflows/deploy-pages.yml`.
+
+<details>
+<summary>One-time setup: enable Pages</summary>
+
+The deploy workflow can't enable Pages for a repo on its own (GitHub
+restricts that to repo admins, not the Actions token). To turn it on:
+
+1. Go to **Settings → Pages** in this repo.
+2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+
+After that, every push to this branch (or `main`) redeploys automatically —
+no further action needed.
+
+</details>
 
 ## Running it locally
 

@@ -75,14 +75,29 @@ h1, h2, h3 { margin: 0 0 8px; }
 
 .layout {
   display: grid;
-  grid-template-columns: 340px 1fr 380px;
+  grid-template-columns: 340px 1fr;
+  grid-template-areas:
+    "courses electives"
+    "calendar calendar";
   gap: 14px;
   padding: 14px;
   align-items: start;
 }
+.panel-courses { grid-area: courses; }
+.panel-electives { grid-area: electives; }
+/* min-width:0 overrides the grid item's default content-based minimum —
+   without it, the calendar's many wide day columns force this whole track
+   (and the page) to grow instead of scrolling internally. */
+.panel-calendar { grid-area: calendar; min-width: 0; }
 
 @media (max-width: 1100px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "courses"
+      "electives"
+      "calendar";
+  }
 }
 
 .panel {

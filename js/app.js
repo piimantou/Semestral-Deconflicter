@@ -524,8 +524,9 @@ function refreshAll() {
 
 // ---------- Category manager modal ----------
 
-function openCategoryModal() {
+function openCategoryModal(editingId) {
   const root = resetModalRoot();
+  const editing = editingId ? categoryById(editingId) : null;
   const rows = () => state.categories.map(cat => {
     const count = coursesInCategory(cat.id).length;
     const modeText = cat.mode === 'required' ? 'Required' : cat.mode === 'bucket' ? `Bucket (take ${cat.target})` : 'Optional';
@@ -533,6 +534,7 @@ function openCategoryModal() {
       <span class="category-row-name">${escapeHtml(cat.name)}</span>
       <span class="category-row-mode">${modeText}</span>
       <span class="category-row-count">${count} course${count === 1 ? '' : 's'}</span>
+      <button type="button" class="btn btn-small" data-action="edit-category" data-category-id="${cat.id}">Edit</button>
       <button type="button" class="btn btn-small btn-danger" data-action="delete-category" data-category-id="${cat.id}">Delete</button>
     </div>`;
   }).join('');
@@ -543,19 +545,20 @@ function openCategoryModal() {
       <h2>Categories</h2>
       <p class="modal-hint">A course can belong to more than one category — e.g. a cross-listed elective can count toward two buckets at once. A <strong>required</strong> category means every course in it is mandatory. A <strong>bucket</strong> category means you're choosing a fixed number of courses out of the ones assigned to it. An <strong>optional</strong> category is never auto-selected — you manually opt individual courses in.</p>
       <div id="category-rows">${rows()}</div>
-      <h3>Add category</h3>
+      <h3>${editing ? `Edit "${escapeHtml(editing.name)}"` : 'Add category'}</h3>
       <form id="category-form">
         <div class="form-row">
-          <label>Name<input type="text" name="name" required placeholder="e.g. AI Electives" /></label>
-          <label class="radio-label"><input type="radio" name="mode" value="required" checked /> Required</label>
-          <label class="radio-label"><input type="radio" name="mode" value="bucket" /> Bucket</label>
-          <label class="radio-label"><input type="radio" name="mode" value="optional" /> Optional</label>
-          <label id="target-field">Take how many?<input type="number" name="target" min="0" value="1" /></label>
+          <label>Name<input type="text" name="name" required placeholder="e.g. AI Electives" value="${editing ? escapeAttr(editing.name) : ''}" /></label>
+          <label class="radio-label"><input type="radio" name="mode" value="required" ${!editing || editing.mode === 'required' ? 'checked' : ''} /> Required</label>
+          <label class="radio-label"><input type="radio" name="mode" value="bucket" ${editing && editing.mode === 'bucket' ? 'checked' : ''} /> Bucket</label>
+          <label class="radio-label"><input type="radio" name="mode" value="optional" ${editing && editing.mode === 'optional' ? 'checked' : ''} /> Optional</label>
+          <label id="target-field">Take how many?<input type="number" name="target" min="0" value="${editing && editing.mode === 'bucket' ? editing.target : 1}" /></label>
         </div>
         <p class="form-error" id="category-form-error" hidden></p>
         <div class="modal-actions">
+          ${editing ? '<button type="button" class="btn btn-ghost" id="btn-cancel-edit-category">Cancel edit</button>' : ''}
           <button type="button" class="btn btn-ghost" id="btn-close-category-modal">Close</button>
-          <button type="submit" class="btn btn-primary">Add category</button>
+          <button type="submit" class="btn btn-primary">${editing ? 'Save changes' : 'Add category'}</button>
         </div>
       </form>
     </div>
@@ -570,6 +573,9 @@ function openCategoryModal() {
 
   root.addEventListener('click', (e) => {
     if (e.target.id === 'modal-overlay' || e.target.id === 'btn-close-category-modal') closeModal();
+    if (e.target.id === 'btn-cancel-edit-category') openCategoryModal();
+    const editBtn = e.target.closest('[data-action="edit-category"]');
+    if (editBtn) openCategoryModal(editBtn.dataset.categoryId);
     const delBtn = e.target.closest('[data-action="delete-category"]');
     if (delBtn) deleteCategory(delBtn.dataset.categoryId);
   });
@@ -582,14 +588,28 @@ function openCategoryModal() {
     const target = parseInt(form.target.value, 10) || 0;
     const errorEl = el('#category-form-error');
     if (!name) { errorEl.hidden = false; errorEl.textContent = 'Name is required.'; return; }
-    if (state.categories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+    if (state.categories.some(c => c.name.toLowerCase() === name.toLowerCase() && c.id !== editingId)) {
       errorEl.hidden = false; errorEl.textContent = 'A category with that name already exists.'; return;
     }
-    const category = { id: uid(), name, mode };
-    if (mode === 'bucket') { category.target = target; category.pool = []; }
-    state.categories.push(category);
+
+    if (editing) {
+      editing.name = name;
+      editing.mode = mode;
+      if (mode === 'bucket') {
+        editing.target = target;
+        if (!editing.pool) editing.pool = coursesInCategory(editing.id).map(c => c.id);
+      } else {
+        delete editing.target;
+        delete editing.pool;
+      }
+    } else {
+      const category = { id: uid(), name, mode };
+      if (mode === 'bucket') { category.target = target; category.pool = []; }
+      state.categories.push(category);
+    }
     persist();
-    openCategoryModal(); // re-render with the new row
+    lastSearch = null;
+    openCategoryModal(); // re-render, back in "add" mode
     refreshAll();
   });
 }

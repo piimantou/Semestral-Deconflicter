@@ -89,6 +89,25 @@ function lockedPicks() {
   return requiredPicks().concat(optionalPicks());
 }
 
+// Bucket courses checked into a pool are shown on the calendar right away
+// (as a raw preview of what's under consideration) even before running the
+// search — a course cross-listed into multiple pools is only counted once.
+function bucketPreviewPicks() {
+  const picks = [];
+  const seen = new Set();
+  for (const cat of bucketCategoryDefs()) {
+    for (const courseId of cat.pool || []) {
+      if (seen.has(courseId)) continue;
+      const course = state.courses.find(c => c.id === courseId);
+      if (!course) continue;
+      const sectionId = state.poolSectionSelections[courseId];
+      const section = course.sections.find(s => s.id === sectionId) || course.sections[0] || null;
+      if (section) { picks.push({ course, section }); seen.add(courseId); }
+    }
+  }
+  return picks;
+}
+
 // ---------- Rendering: course list ----------
 
 const MODE_BADGE_CLASS = { required: 'type-required', bucket: 'type-bucket', optional: 'type-optional' };
@@ -374,12 +393,17 @@ function renderBucketPanel() {
     const courses = coursesInCategory(cat.id);
     if (!cat.pool) cat.pool = courses.map(c => c.id);
     const items = courses.map(c => {
-      const checked = cat.pool.includes(c.id) ? 'checked' : '';
+      const checked = cat.pool.includes(c.id);
+      const sectionId = state.poolSectionSelections[c.id] || c.sections[0]?.id;
+      const sectionSelect = checked && c.sections.length > 1
+        ? `<select class="pool-section-select" data-course-id="${c.id}">${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionId ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}</select>`
+        : '';
       return `<label class="pool-item">
-        <input type="checkbox" class="bucket-pool-check" data-category-id="${cat.id}" data-course-id="${c.id}" ${checked} />
+        <input type="checkbox" class="bucket-pool-check" data-category-id="${cat.id}" data-course-id="${c.id}" ${checked ? 'checked' : ''} />
         <span class="section-swatch" style="background:${c.color}"></span>
         ${escapeHtml(c.code ? c.code + ' — ' : '')}${escapeHtml(c.name)}
         <span class="pool-item-sections">(${c.sections.length} section${c.sections.length === 1 ? '' : 's'})</span>
+        ${sectionSelect}
       </label>`;
     }).join('') || `<p class="empty-hint">No courses assigned to this category yet.</p>`;
 
@@ -526,7 +550,7 @@ function currentDisplayPicks() {
     }
     if (picks.length) return picks;
   }
-  return lockedPicks();
+  return lockedPicks().concat(bucketPreviewPicks());
 }
 
 const NARROW_LAYOUT_QUERY = '(max-width: 1100px)';
@@ -561,10 +585,14 @@ function refreshAll() {
 function openCategoryModal(editingId) {
   const root = resetModalRoot();
   const editing = editingId ? categoryById(editingId) : null;
-  const rows = () => state.categories.map(cat => {
+  const rows = () => state.categories.map((cat, idx) => {
     const count = coursesInCategory(cat.id).length;
     const modeText = cat.mode === 'required' ? 'Required' : cat.mode === 'bucket' ? `Bucket (take ${cat.target})` : 'Optional';
     return `<div class="category-row" data-category-id="${cat.id}">
+      <span class="category-row-reorder">
+        <button type="button" class="btn btn-small" data-action="move-category-up" data-category-id="${cat.id}" ${idx === 0 ? 'disabled' : ''} title="Move up">&uarr;</button>
+        <button type="button" class="btn btn-small" data-action="move-category-down" data-category-id="${cat.id}" ${idx === state.categories.length - 1 ? 'disabled' : ''} title="Move down">&darr;</button>
+      </span>
       <span class="category-row-name">${escapeHtml(cat.name)}</span>
       <span class="category-row-mode">${modeText}</span>
       <span class="category-row-count">${count} course${count === 1 ? '' : 's'}</span>
@@ -577,7 +605,7 @@ function openCategoryModal(editingId) {
   <div class="modal-overlay" id="modal-overlay">
     <div class="modal">
       <h2>Categories</h2>
-      <p class="modal-hint">A course can belong to more than one category — e.g. a cross-listed elective can count toward two buckets at once. A <strong>required</strong> category means every course in it is mandatory. A <strong>bucket</strong> category means you're choosing a fixed number of courses out of the ones assigned to it. An <strong>optional</strong> category is never auto-selected — you manually opt individual courses in.</p>
+      <p class="modal-hint">A course can belong to more than one category — e.g. a cross-listed elective can count toward two buckets at once. A <strong>required</strong> category means every course in it is mandatory. A <strong>bucket</strong> category means you're choosing a fixed number of courses out of the ones assigned to it. An <strong>optional</strong> category is never auto-selected — you manually opt individual courses in. Use the arrows to reorder — this controls the order categories are grouped in on the Courses list.</p>
       <div id="category-rows">${rows()}</div>
       <h3>${editing ? `Edit "${escapeHtml(editing.name)}"` : 'Add category'}</h3>
       <form id="category-form">
@@ -612,6 +640,10 @@ function openCategoryModal(editingId) {
     if (editBtn) openCategoryModal(editBtn.dataset.categoryId);
     const delBtn = e.target.closest('[data-action="delete-category"]');
     if (delBtn) deleteCategory(delBtn.dataset.categoryId);
+    const upBtn = e.target.closest('[data-action="move-category-up"]');
+    if (upBtn) moveCategory(upBtn.dataset.categoryId, -1, editingId);
+    const downBtn = e.target.closest('[data-action="move-category-down"]');
+    if (downBtn) moveCategory(downBtn.dataset.categoryId, 1, editingId);
   });
 
   el('#category-form').addEventListener('submit', (e) => {
@@ -662,6 +694,16 @@ function deleteCategory(categoryId) {
   state.categories = state.categories.filter(c => c.id !== categoryId);
   persist();
   openCategoryModal();
+  refreshAll();
+}
+
+function moveCategory(categoryId, direction, keepEditingId) {
+  const idx = state.categories.findIndex(c => c.id === categoryId);
+  const swapIdx = idx + direction;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= state.categories.length) return;
+  [state.categories[idx], state.categories[swapIdx]] = [state.categories[swapIdx], state.categories[idx]];
+  persist();
+  openCategoryModal(keepEditingId);
   refreshAll();
 }
 
@@ -818,6 +860,7 @@ function deleteCourse(courseId) {
   if (state.pinnedSchedule) delete state.pinnedSchedule[courseId];
   if (state.requiredSelections) delete state.requiredSelections[courseId];
   if (state.optionalSelections) delete state.optionalSelections[courseId];
+  if (state.poolSectionSelections) delete state.poolSectionSelections[courseId];
   persist();
   lastSearch = null;
   refreshAll();
@@ -921,11 +964,23 @@ function init() {
         cat.pool = cat.pool.filter(id => id !== courseId);
       }
       persist();
+      lastSearch = null;
+      previewPicks = null;
+      refreshAll();
+    }
+    if (e.target.matches('.pool-section-select')) {
+      state.poolSectionSelections[e.target.dataset.courseId] = e.target.value;
+      persist();
+      lastSearch = null;
+      previewPicks = null;
+      refreshAll();
     }
     if (e.target.matches('.bucket-target-input')) {
       const cat = categoryById(e.target.dataset.categoryId);
       cat.target = Math.max(0, parseInt(e.target.value, 10) || 0);
       persist();
+      lastSearch = null;
+      renderResults(null);
     }
   });
 

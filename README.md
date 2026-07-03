@@ -39,7 +39,8 @@ course) and get a feel for the tool.
 ## How it works
 
 1. **Set up categories.** Click **Categories** to define the groups your
-   courses fall into. A category is one of:
+   courses fall into, and reorder them with the arrow buttons — this also
+   controls the grouping order on the Courses list. A category is one of:
    - **Required** — every course assigned to it is mandatory (e.g. "Core").
    - **Bucket** — you're choosing a fixed number of courses out of the ones
      assigned to it (e.g. "AI Electives, take 2" or "Humanities, take 1").
@@ -64,10 +65,12 @@ course) and get a feel for the tool.
    want in the **Optional courses** panel regardless of bucket targets. A
    red banner appears if your required/optional-selected courses conflict
    with each other — fix that first, since no bucket choice can work around it.
-4. In the **Bucket deconfliction** panel, each bucket category shows its
-   target count and the courses under consideration (uncheck any you want to
-   exclude without deleting). Click **Generate valid combinations** — the
-   tool exhaustively searches every way to satisfy every bucket's target
+4. In the **Bucket deconfliction** panel, each bucket category lists its
+   courses with a checkbox and its target count. A checked course shows on
+   the calendar immediately, as a raw preview of what you're considering —
+   uncheck it to remove it from both the calendar and the search's
+   candidate pool. Click **Generate valid combinations** — the tool
+   exhaustively searches every way to satisfy every bucket's target
    simultaneously (crediting cross-listed courses toward every bucket they
    belong to) without conflicting with your locked-in schedule or each other.
 5. Results are ranked by your chosen criterion (fewest days on campus, least

@@ -68,6 +68,7 @@ function defaultState() {
     ],
     requiredSelections: {},
     optionalSelections: {},
+    poolSectionSelections: {},
     sortMode: 'compact',
     showWeekend: false,
     pinnedSchedule: null,
@@ -128,6 +129,7 @@ function normalize(state) {
   });
   merged.requiredSelections = merged.requiredSelections || {};
   merged.optionalSelections = merged.optionalSelections || {};
+  merged.poolSectionSelections = merged.poolSectionSelections || {};
   if (!merged.semesterStart || !merged.semesterEnd) {
     Object.assign(merged, defaultSemesterRange());
   }

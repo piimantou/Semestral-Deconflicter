@@ -75,10 +75,10 @@ h1, h2, h3 { margin: 0 0 8px; }
 
 .layout {
   display: grid;
-  grid-template-columns: 340px 400px 1fr;
+  grid-template-columns: 3fr 2fr;
   grid-template-areas:
-    "courses electives ."
-    "calendar calendar calendar";
+    "courses electives"
+    "calendar calendar";
   gap: 14px;
   padding: 14px;
   align-items: start;
@@ -412,6 +412,9 @@ input, select {
 }
 .category-row-name { font-weight: 600; flex: 1; }
 .category-row-mode, .category-row-count { color: var(--text-dim); font-size: 0.8rem; }
+.category-row-reorder { display: flex; gap: 2px; flex-shrink: 0; }
+.category-row-reorder .btn { padding: 2px 7px; line-height: 1; }
+.category-row-reorder .btn:disabled { opacity: 0.3; cursor: default; }
 
 @media print {
   .topbar, .panel-courses, .panel-electives, #conflict-banner { display: none !important; }

@@ -61,9 +61,13 @@ course) and get a feel for the tool.
    day/time slot but non-overlapping date ranges aren't treated as
    conflicting, since they'd never actually coincide.
 3. If a required course has multiple sections, pick which one you're
-   actually enrolled in from the dropdown on its card. Check any courses you
-   want in the **Optional courses** panel regardless of bucket targets. A
-   red banner appears if your required/optional-selected courses conflict
+   actually enrolled in from the dropdown on its card — or pick **All
+   sections** to show every one of its meeting times on the calendar at
+   once (handy for comparing options before you've decided). The same "All
+   sections" choice is available anywhere else a section dropdown shows up
+   (the Optional courses panel, bucket pool checkboxes). Check any courses
+   you want in the **Optional courses** panel regardless of bucket targets.
+   A red banner appears if your required/optional-selected courses conflict
    with each other — fix that first, since no bucket choice can work around it.
 4. In the **Bucket deconfliction** panel, each bucket category lists its
    courses with a checkbox and its target count. A checked course shows on

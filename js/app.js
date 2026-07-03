@@ -56,31 +56,35 @@ function optionalCourses() {
   return state.courses.filter(c => courseIsInMode(c, 'optional'));
 }
 
-function chosenRequiredSection(course) {
-  const sectionId = state.requiredSelections[course.id];
-  return course.sections.find(s => s.id === sectionId) || course.sections[0] || null;
+// Sentinel stored in a *SectionSelections map in place of a real section id,
+// meaning "show every section of this course" rather than just one.
+const ALL_SECTIONS = '__all__';
+
+// Resolves a stored selection value (a section id, ALL_SECTIONS, or unset)
+// to the list of sections it represents.
+function sectionsForSelection(course, value) {
+  if (value === ALL_SECTIONS) return course.sections;
+  const section = course.sections.find(s => s.id === value);
+  if (section) return [section];
+  return course.sections[0] ? [course.sections[0]] : [];
+}
+
+function chosenRequiredValue(course) {
+  return state.requiredSelections[course.id] || course.sections[0]?.id;
 }
 
 function requiredPicks() {
-  return requiredCourses()
-    .map(c => {
-      const section = chosenRequiredSection(c);
-      return section ? { course: c, section } : null;
-    })
-    .filter(Boolean);
+  return requiredCourses().flatMap(c =>
+    sectionsForSelection(c, chosenRequiredValue(c)).map(section => ({ course: c, section }))
+  );
 }
 
 // Optional courses the user has manually opted into (checked in the
-// Optional courses panel), each with whichever section they chose.
+// Optional courses panel), each with whichever section(s) they chose.
 function optionalPicks() {
   return optionalCourses()
     .filter(c => state.optionalSelections[c.id])
-    .map(c => {
-      const sectionId = state.optionalSelections[c.id];
-      const section = c.sections.find(s => s.id === sectionId) || c.sections[0] || null;
-      return section ? { course: c, section } : null;
-    })
-    .filter(Boolean);
+    .flatMap(c => sectionsForSelection(c, state.optionalSelections[c.id]).map(section => ({ course: c, section })));
 }
 
 // Everything that's fixed in place before the bucket search runs: mandatory
@@ -100,9 +104,12 @@ function bucketPreviewPicks() {
       if (seen.has(courseId)) continue;
       const course = state.courses.find(c => c.id === courseId);
       if (!course) continue;
-      const sectionId = state.poolSectionSelections[courseId];
-      const section = course.sections.find(s => s.id === sectionId) || course.sections[0] || null;
-      if (section) { picks.push({ course, section }); seen.add(courseId); }
+      const value = state.poolSectionSelections[courseId] || course.sections[0]?.id;
+      const sections = sectionsForSelection(course, value);
+      if (sections.length) {
+        sections.forEach(section => picks.push({ course, section }));
+        seen.add(courseId);
+      }
     }
   }
   return picks;
@@ -119,11 +126,11 @@ function courseCardHtml(course) {
     return `<span class="type-badge ${MODE_BADGE_CLASS[cat.mode] || ''}">${escapeHtml(cat.name)}</span>`;
   }).join('');
   const isRequired = courseIsInMode(course, 'required');
-  const activeRequiredSectionId = isRequired ? chosenRequiredSection(course)?.id : null;
+  const requiredValue = isRequired ? chosenRequiredValue(course) : null;
   const sectionsHtml = course.sections.map(s => {
     const days = s.days.join(' ');
     const rangeText = s.rangeStart || s.rangeEnd ? ` &middot; ${s.rangeStart ? formatShortDate(parseISODate(s.rangeStart)) : 'start'}&ndash;${s.rangeEnd ? formatShortDate(parseISODate(s.rangeEnd)) : 'end'}` : '';
-    const isActive = isRequired && course.sections.length > 1 && s.id === activeRequiredSectionId;
+    const isActive = isRequired && course.sections.length > 1 && (requiredValue === ALL_SECTIONS || s.id === requiredValue);
     return `<li class="section-row${isActive ? ' section-row-active' : ''}">
       <span class="section-swatch" style="background:${course.color}"></span>
       <span class="section-label">${escapeHtml(s.label || 'Section')}</span>
@@ -134,9 +141,10 @@ function courseCardHtml(course) {
 
   let requiredSelector = '';
   if (isRequired && course.sections.length > 1) {
-    const options = course.sections.map(s => `<option value="${s.id}" ${s.id === activeRequiredSectionId ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('');
+    const options = course.sections.map(s => `<option value="${s.id}" ${s.id === requiredValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('');
+    const allOption = `<option value="${ALL_SECTIONS}" ${requiredValue === ALL_SECTIONS ? 'selected' : ''}>All sections</option>`;
     requiredSelector = `<label class="core-select-label">Section used:
-      <select class="required-section-select" data-course-id="${course.id}">${options}</select>
+      <select class="required-section-select" data-course-id="${course.id}">${allOption}${options}</select>
     </label>`;
   }
 
@@ -394,9 +402,12 @@ function renderBucketPanel() {
     if (!cat.pool) cat.pool = courses.map(c => c.id);
     const items = courses.map(c => {
       const checked = cat.pool.includes(c.id);
-      const sectionId = state.poolSectionSelections[c.id] || c.sections[0]?.id;
+      const sectionValue = state.poolSectionSelections[c.id] || c.sections[0]?.id;
       const sectionSelect = checked && c.sections.length > 1
-        ? `<select class="pool-section-select" data-course-id="${c.id}">${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionId ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}</select>`
+        ? `<select class="pool-section-select" data-course-id="${c.id}">
+             <option value="${ALL_SECTIONS}" ${sectionValue === ALL_SECTIONS ? 'selected' : ''}>All sections</option>
+             ${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}
+           </select>`
         : '';
       return `<label class="pool-item">
         <input type="checkbox" class="bucket-pool-check" data-category-id="${cat.id}" data-course-id="${c.id}" ${checked ? 'checked' : ''} />
@@ -428,9 +439,12 @@ function renderOptionalPanel() {
   }
   const items = courses.map(c => {
     const included = !!state.optionalSelections[c.id];
-    const sectionId = state.optionalSelections[c.id] || c.sections[0]?.id;
+    const sectionValue = state.optionalSelections[c.id] || c.sections[0]?.id;
     const sectionSelect = c.sections.length > 1
-      ? `<select class="optional-section-select" data-course-id="${c.id}">${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionId ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}</select>`
+      ? `<select class="optional-section-select" data-course-id="${c.id}">
+           <option value="${ALL_SECTIONS}" ${sectionValue === ALL_SECTIONS ? 'selected' : ''}>All sections</option>
+           ${c.sections.map(s => `<option value="${s.id}" ${s.id === sectionValue ? 'selected' : ''}>${escapeHtml(s.label || 'Section')} (${s.days.join(' ')} ${s.start}-${s.end})</option>`).join('')}
+         </select>`
       : '';
     return `<label class="pool-item">
       <input type="checkbox" class="optional-include-check" data-course-id="${c.id}" ${included ? 'checked' : ''} />

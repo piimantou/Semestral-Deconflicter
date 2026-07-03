@@ -36,11 +36,14 @@
 
   <section class="panel panel-calendar">
     <div class="panel-header">
-      <h2>Weekly view</h2>
+      <h2>Semester view</h2>
       <div class="calendar-controls">
+        <label class="inline-date">Semester starts <input type="date" id="semester-start" /></label>
+        <label class="inline-date">ends <input type="date" id="semester-end" /></label>
         <label class="inline-check"><input type="checkbox" id="chk-weekend" /> Show weekend</label>
       </div>
     </div>
+    <p class="form-error" id="semester-range-error" hidden></p>
     <div id="calendar" class="calendar"></div>
   </section>
 

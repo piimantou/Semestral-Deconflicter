@@ -156,30 +156,60 @@ h1, h2, h3 { margin: 0 0 8px; }
 
 /* Calendar — a clean, When2Meet-style time grid: sticky day headers, a fixed
    time gutter, and fine horizontal rules every half hour / hour. */
-.calendar-controls { font-size: 0.85rem; color: var(--text-dim); }
+.calendar-controls { font-size: 0.85rem; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .inline-check { display: flex; align-items: center; gap: 4px; }
+.inline-date { display: flex; align-items: center; gap: 6px; }
+#semester-range-error { margin: -4px 0 8px; }
 
 .calendar { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .cal-scroll { max-height: 640px; overflow-y: auto; overflow-x: auto; }
 
-.cal-header-row {
+.cal-header-row, .cal-subheader-row {
   display: grid;
   position: sticky;
-  top: 0;
-  z-index: 2;
   background: var(--panel);
 }
+.cal-header-row { top: 0; z-index: 3; }
+.cal-subheader-row { top: 22px; z-index: 2; }
 .cal-gutter-header { border-bottom: 1px solid var(--border); }
-.cal-day-header {
+
+.cal-week-header {
+  height: 22px;
+  line-height: 22px;
   text-align: center;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-day-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  text-align: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+.cal-day-header .dow {
+  font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-dim);
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-  border-left: 1px solid var(--border);
+}
+.cal-day-header .date-num {
+  font-size: 0.7rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .cal-body { position: relative; display: grid; }

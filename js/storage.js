@@ -11,6 +11,8 @@
 //   requiredSelections: { [courseId]: sectionId },  // which section is used for a multi-section required course
 //   sortMode: string,
 //   showWeekend: boolean,
+//   semesterStart: 'YYYY-MM-DD',
+//   semesterEnd: 'YYYY-MM-DD',
 //   pinnedSchedule: { [courseId]: sectionId } | null
 // }
 
@@ -31,6 +33,23 @@ function nextColor(existingCourses) {
   return COLOR_PALETTE[existingCourses.length % COLOR_PALETTE.length];
 }
 
+function isoDateStr(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// A sensible out-of-the-box range (today through 15 weeks out) so the
+// semester calendar has something to show before the user sets real dates.
+function defaultSemesterRange() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 15 * 7 - 1);
+  return { semesterStart: isoDateStr(start), semesterEnd: isoDateStr(end) };
+}
+
 const DEFAULT_CORE_CATEGORY_ID = 'category-core';
 const DEFAULT_ELECTIVE_CATEGORY_ID = 'category-electives';
 
@@ -45,6 +64,7 @@ function defaultState() {
     sortMode: 'compact',
     showWeekend: false,
     pinnedSchedule: null,
+    ...defaultSemesterRange(),
   };
 }
 
@@ -82,6 +102,9 @@ function normalize(state) {
     }
   });
   merged.requiredSelections = merged.requiredSelections || {};
+  if (!merged.semesterStart || !merged.semesterEnd) {
+    Object.assign(merged, defaultSemesterRange());
+  }
   return merged;
 }
 

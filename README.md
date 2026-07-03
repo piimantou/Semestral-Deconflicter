@@ -63,9 +63,13 @@ a required category and two elective buckets) and get a feel for the tool.
    keeps it as your selected schedule.
 6. **Print schedule** prints just the calendar view.
 
-The weekly calendar is a compact time-grid in the style of When2Meet: sticky
-day headers, a fixed time gutter, fine hour/half-hour gridlines, and
-color-coded blocks per course.
+The calendar is a compact time-grid in the style of When2Meet — sticky
+headers, a fixed time gutter, fine hour/half-hour gridlines, color-coded
+blocks per course — but spans your whole semester rather than one generic
+week. Set **Semester starts** / **ends** above it and it lays out one column
+per actual calendar day, grouped into week headers; a course meeting "Mon
+Wed" repeats in every week of the range. If the semester starts or ends
+mid-week, that edge week is simply partial (e.g. only Wed–Fri).
 
 ## Project layout
 

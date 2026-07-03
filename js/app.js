@@ -12,6 +12,19 @@ function persist() {
   saveState(state);
 }
 
+// Swaps #modal-root for a fresh, listener-free node. Modal open functions
+// re-render their whole modal (and re-add their own listeners) every time
+// they run, including recursively after an in-modal action like add/delete —
+// reusing the same persistent node would stack duplicate listeners on every
+// re-open, so each open starts from a clean element instead.
+function resetModalRoot() {
+  const old = document.getElementById('modal-root');
+  const fresh = document.createElement('div');
+  fresh.id = 'modal-root';
+  old.replaceWith(fresh);
+  return fresh;
+}
+
 // ---------- Category / course helpers ----------
 
 function categoryById(id) {
@@ -106,19 +119,74 @@ function renderCourseList() {
   list.innerHTML = html;
 }
 
-// ---------- Rendering: calendar (When2Meet-inspired grid) ----------
+// ---------- Rendering: calendar (When2Meet-inspired grid, spanning the whole semester) ----------
 
 const DEFAULT_RANGE_START = 7 * 60; // 07:00
 const DEFAULT_RANGE_END = 21 * 60; // 21:00
 const SLOT_MINUTES = 30;
 const ROW_HEIGHT = 22; // px per 30-minute slot
+const DAY_COL_MIN_WIDTH = 88; // px — keeps week columns readable even when the semester spans many weeks
 
 function calendarDays() {
   return state.showWeekend ? DAY_ORDER : DAY_ORDER.slice(0, 5);
 }
 
-function renderCalendar(picks) {
-  const days = calendarDays();
+function parseISODate(str) {
+  if (!str) return null;
+  const parts = str.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(n => Number.isNaN(n))) return null;
+  const [y, m, d] = parts;
+  const dt = new Date(y, m - 1, d);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+
+function mondayOnOrBefore(date) {
+  const d = new Date(date);
+  const dow = d.getDay(); // 0 = Sun .. 6 = Sat
+  const diff = dow === 0 ? 6 : dow - 1;
+  d.setDate(d.getDate() - diff);
+  return d;
+}
+
+function formatShortDate(date) {
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// Groups every included day of the configured semester range into real
+// Mon–Sun calendar weeks (the first/last week can be partial if the
+// semester starts or ends mid-week). Returns null if no valid range is set,
+// so callers can fall back to a single generic week.
+function semesterWeeks() {
+  const start = parseISODate(state.semesterStart);
+  const end = parseISODate(state.semesterEnd);
+  if (!start || !end || end < start) return null;
+
+  const includedDayNames = new Set(calendarDays());
+  const week0Start = mondayOnOrBefore(start);
+  const weeksByIndex = new Map();
+
+  const cur = new Date(start);
+  while (cur <= end) {
+    const dayName = DAY_ORDER[(cur.getDay() + 6) % 7];
+    if (includedDayNames.has(dayName)) {
+      const weekIndex = Math.floor((cur - week0Start) / (7 * 24 * 3600 * 1000));
+      if (!weeksByIndex.has(weekIndex)) weeksByIndex.set(weekIndex, []);
+      weeksByIndex.get(weekIndex).push(new Date(cur));
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return Array.from(weeksByIndex.keys()).sort((a, b) => a - b).map(idx => {
+    const weekStart = new Date(week0Start);
+    weekStart.setDate(weekStart.getDate() + idx * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    return { weekStart, weekEnd, dates: weeksByIndex.get(idx) };
+  });
+}
+
+function computeTimeRange(picks) {
   let minStart = DEFAULT_RANGE_START, maxEnd = DEFAULT_RANGE_END;
   for (const { section } of picks) {
     minStart = Math.min(minStart, timeToMinutes(section.start));
@@ -126,6 +194,77 @@ function renderCalendar(picks) {
   }
   minStart = Math.floor(minStart / 60) * 60;
   maxEnd = Math.ceil(maxEnd / 60) * 60;
+  return { minStart, maxEnd };
+}
+
+function calendarBlockHtml(pick, minStart, pxPerMin) {
+  const top = (timeToMinutes(pick.section.start) - minStart) * pxPerMin;
+  const h = (timeToMinutes(pick.section.end) - timeToMinutes(pick.section.start)) * pxPerMin;
+  return `<div class="cal-block" style="top:${top}px;height:${h}px;background:${pick.course.color}" title="${escapeHtml(pick.course.name)}">
+    <div class="cal-block-title">${escapeHtml(pick.course.code || pick.course.name)}</div>
+    <div class="cal-block-meta">${pick.section.start}&ndash;${pick.section.end}${pick.section.location ? '<br>' + escapeHtml(pick.section.location) : ''}</div>
+  </div>`;
+}
+
+function renderCalendar(picks) {
+  const weeks = semesterWeeks();
+  if (!weeks || weeks.length === 0) {
+    renderGenericWeekCalendar(picks);
+    return;
+  }
+
+  const { minStart, maxEnd } = computeTimeRange(picks);
+  const numSlots = (maxEnd - minStart) / SLOT_MINUTES;
+  const pxPerMin = ROW_HEIGHT / SLOT_MINUTES;
+  const height = numSlots * ROW_HEIGHT;
+
+  const gutterCells = [];
+  for (let t = minStart; t <= maxEnd; t += 60) {
+    const top = (t - minStart) * pxPerMin;
+    gutterCells.push(`<div class="hour-label" style="top:${top}px">${formatMinutes(t)}</div>`);
+  }
+
+  const allDates = weeks.flatMap(w => w.dates);
+  const totalCols = allDates.length;
+  const colTemplate = `56px repeat(${totalCols}, minmax(${DAY_COL_MIN_WIDTH}px, 1fr))`;
+
+  const weekHeaderCells = weeks.map(w =>
+    `<div class="cal-week-header" style="grid-column: span ${w.dates.length}">${formatShortDate(w.weekStart)} &ndash; ${formatShortDate(w.weekEnd)}</div>`
+  ).join('');
+
+  const dayHeaderCells = allDates.map(d => {
+    const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
+    return `<div class="cal-day-header"><span class="dow">${dayName}</span><span class="date-num">${formatShortDate(d)}</span></div>`;
+  }).join('');
+
+  const dayColumns = allDates.map(d => {
+    const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
+    const blocks = picks.filter(p => p.section.days.includes(dayName)).map(p => calendarBlockHtml(p, minStart, pxPerMin)).join('');
+    return `<div class="cal-day-col" data-date="${isoDateStr(d)}">${blocks}</div>`;
+  }).join('');
+
+  el('#calendar').innerHTML = `
+    <div class="cal-scroll">
+      <div class="cal-header-row" style="grid-template-columns:${colTemplate}">
+        <div class="cal-gutter-header"></div>
+        ${weekHeaderCells}
+      </div>
+      <div class="cal-subheader-row" style="grid-template-columns:${colTemplate}">
+        <div class="cal-gutter-header"></div>
+        ${dayHeaderCells}
+      </div>
+      <div class="cal-body" style="height:${height}px;grid-template-columns:${colTemplate}">
+        <div class="cal-gutter" style="height:${height}px">${gutterCells.join('')}</div>
+        <div class="cal-grid" style="height:${height}px;background-size:100% ${ROW_HEIGHT}px, 100% ${ROW_HEIGHT * 2}px;grid-template-columns:repeat(${totalCols},minmax(${DAY_COL_MIN_WIDTH}px, 1fr))">${dayColumns}</div>
+      </div>
+    </div>`;
+}
+
+// Used only when no valid semester date range is set: a single representative
+// week of day-of-week columns (Mon..Fri/Sun), same as before dates existed.
+function renderGenericWeekCalendar(picks) {
+  const days = calendarDays();
+  const { minStart, maxEnd } = computeTimeRange(picks);
   const numSlots = (maxEnd - minStart) / SLOT_MINUTES;
   const pxPerMin = ROW_HEIGHT / SLOT_MINUTES;
   const height = numSlots * ROW_HEIGHT;
@@ -137,16 +276,7 @@ function renderCalendar(picks) {
   }
 
   const dayColumns = days.map(day => {
-    const blocks = picks
-      .filter(p => p.section.days.includes(day))
-      .map(p => {
-        const top = (timeToMinutes(p.section.start) - minStart) * pxPerMin;
-        const h = (timeToMinutes(p.section.end) - timeToMinutes(p.section.start)) * pxPerMin;
-        return `<div class="cal-block" style="top:${top}px;height:${h}px;background:${p.course.color}" title="${escapeHtml(p.course.name)}">
-          <div class="cal-block-title">${escapeHtml(p.course.code || p.course.name)}</div>
-          <div class="cal-block-meta">${p.section.start}&ndash;${p.section.end}${p.section.location ? '<br>' + escapeHtml(p.section.location) : ''}</div>
-        </div>`;
-      }).join('');
+    const blocks = picks.filter(p => p.section.days.includes(day)).map(p => calendarBlockHtml(p, minStart, pxPerMin)).join('');
     return `<div class="cal-day-col" data-day="${day}">${blocks}</div>`;
   }).join('');
 
@@ -323,7 +453,7 @@ function refreshAll() {
 // ---------- Category manager modal ----------
 
 function openCategoryModal() {
-  const root = el('#modal-root');
+  const root = resetModalRoot();
   const rows = () => state.categories.map(cat => {
     const count = coursesInCategory(cat.id).length;
     const modeText = cat.mode === 'required' ? 'Required' : `Bucket (take ${cat.target})`;
@@ -421,7 +551,7 @@ function openCourseModal(existing) {
     `<option value="${cat.id}" ${cat.id === course.categoryId ? 'selected' : ''}>${escapeHtml(cat.name)} (${cat.mode === 'required' ? 'Required' : 'Bucket'})</option>`
   ).join('');
 
-  const root = el('#modal-root');
+  const root = resetModalRoot();
   root.innerHTML = `
   <div class="modal-overlay" id="modal-overlay">
     <div class="modal">
@@ -574,8 +704,7 @@ function importJson(file) {
       persist();
       lastSearch = null;
       previewPicks = null;
-      el('#sort-mode').value = state.sortMode;
-      el('#chk-weekend').checked = !!state.showWeekend;
+      syncTopControls();
       refreshAll();
     } catch (e) {
       alert('That file could not be read as a valid export: ' + e.message);
@@ -593,9 +722,32 @@ function escapeAttr(str) { return escapeHtml(str); }
 
 // ---------- Wiring ----------
 
-function init() {
+function syncTopControls() {
   el('#sort-mode').value = state.sortMode;
   el('#chk-weekend').checked = !!state.showWeekend;
+  el('#semester-start').value = state.semesterStart || '';
+  el('#semester-end').value = state.semesterEnd || '';
+  el('#semester-range-error').hidden = true;
+}
+
+function handleSemesterRangeChange() {
+  const start = el('#semester-start').value;
+  const end = el('#semester-end').value;
+  const errorEl = el('#semester-range-error');
+  if (start && end && end < start) {
+    errorEl.hidden = false;
+    errorEl.textContent = 'Semester end date must be after the start date.';
+    return;
+  }
+  errorEl.hidden = true;
+  state.semesterStart = start || null;
+  state.semesterEnd = end || null;
+  persist();
+  renderCalendar(currentDisplayPicks());
+}
+
+function init() {
+  syncTopControls();
 
   el('#btn-add-course').addEventListener('click', () => openCourseModal(null));
   el('#btn-manage-categories').addEventListener('click', () => openCategoryModal());
@@ -655,13 +807,16 @@ function init() {
     renderCalendar(currentDisplayPicks());
   });
 
+  el('#semester-start').addEventListener('change', handleSemesterRangeChange);
+  el('#semester-end').addEventListener('change', handleSemesterRangeChange);
+
   el('#btn-load-example').addEventListener('click', () => {
     if (state.courses.length && !confirm('Replace current data with the example schedule?')) return;
     state = exampleState();
     persist();
     lastSearch = null;
     previewPicks = null;
-    el('#sort-mode').value = state.sortMode;
+    syncTopControls();
     refreshAll();
   });
 
@@ -680,7 +835,7 @@ function init() {
     state = defaultState();
     lastSearch = null;
     previewPicks = null;
-    el('#sort-mode').value = state.sortMode;
+    syncTopControls();
     refreshAll();
   });
 

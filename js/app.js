@@ -315,13 +315,90 @@ function computeTimeRange(picks) {
   return { minStart, maxEnd };
 }
 
-function calendarBlockHtml(course, timeSlot, location, minStart, pxPerMin) {
-  const top = (timeToMinutes(timeSlot.start) - minStart) * pxPerMin;
-  const h = (timeToMinutes(timeSlot.end) - timeToMinutes(timeSlot.start)) * pxPerMin;
-  return `<div class="cal-block" style="top:${top}px;height:${h}px;background:${course.color}" title="${escapeHtml(course.name)}">
-    <div class="cal-block-title">${escapeHtml(course.code || course.name)}</div>
-    <div class="cal-block-meta">${timeSlot.start}&ndash;${timeSlot.end}${location ? '<br>' + escapeHtml(location) : ''}</div>
+// Assigns side-by-side column layout to a list of same-day time entries so
+// overlapping ones sit next to each other instead of silently stacking on
+// top of one another, and records which other entries each one actually
+// conflicts with (for a tooltip + warning badge). entries: [{start,end,...}]
+// with start/end in minutes; non-overlapping entries elsewhere in the day
+// each still get the full column width, since clusters are handled
+// independently.
+function layoutDayBlocks(entries) {
+  const sorted = entries.slice().sort((a, b) => a.start - b.start || a.end - b.end);
+  const result = [];
+  let cluster = [];
+  let clusterEnd = -Infinity;
+
+  const flushCluster = () => {
+    if (cluster.length === 0) return;
+    const columnEnds = [];
+    const colIndexOf = new Map();
+    for (const ev of cluster) {
+      let colIndex = columnEnds.findIndex(end => end <= ev.start);
+      if (colIndex === -1) { colIndex = columnEnds.length; columnEnds.push(ev.end); }
+      else { columnEnds[colIndex] = ev.end; }
+      colIndexOf.set(ev, colIndex);
+    }
+    const colCount = columnEnds.length;
+    for (const ev of cluster) {
+      const conflictsWith = cluster.filter(o => o !== ev && ev.start < o.end && o.start < ev.end);
+      result.push({ ...ev, colIndex: colIndexOf.get(ev), colCount, conflictsWith });
+    }
+    cluster = [];
+  };
+
+  for (const ev of sorted) {
+    if (cluster.length > 0 && ev.start >= clusterEnd) {
+      flushCluster();
+      clusterEnd = -Infinity;
+    }
+    cluster.push(ev);
+    clusterEnd = Math.max(clusterEnd, ev.end);
+  }
+  flushCluster();
+
+  return result;
+}
+
+function calendarBlockHtml(entry, minStart, pxPerMin) {
+  const top = (entry.start - minStart) * pxPerMin;
+  const h = (entry.end - entry.start) * pxPerMin;
+  const widthPct = 100 / entry.colCount;
+  const leftPct = widthPct * entry.colIndex;
+  const hasConflict = entry.conflictsWith.length > 0;
+  const titleParts = [entry.course.name];
+  if (hasConflict) titleParts.push(`Conflicts with ${entry.conflictsWith.map(c => c.course.name).join(', ')}`);
+  return `<div class="cal-block${hasConflict ? ' cal-block-conflict' : ''}" style="top:${top}px;height:${h}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${entry.course.color}" title="${escapeHtml(titleParts.join(' — '))}">
+    <div class="cal-block-title">${escapeHtml(entry.course.code || entry.course.name)}${hasConflict ? ' <span class="cal-conflict-badge">&#9888;</span>' : ''}</div>
+    <div class="cal-block-meta">${entry.startStr}&ndash;${entry.endStr}${entry.location ? '<br>' + escapeHtml(entry.location) : ''}</div>
   </div>`;
+}
+
+// Builds the {start,end,startStr,endStr,course,location} entries a set of
+// picks contributes on one calendar date, ready for layoutDayBlocks().
+function dayEntriesFor(picks, isoDate, dayName) {
+  return picks.flatMap(p =>
+    occurrenceTimesForDate(p.section, isoDate, dayName).map(t => ({
+      start: timeToMinutes(t.start), end: timeToMinutes(t.end),
+      startStr: t.start, endStr: t.end,
+      course: p.course, location: p.section.location,
+    }))
+  );
+}
+
+// Used only when there's no real semester date range to anchor to (the
+// generic single-week fallback, on-screen or in print): matches purely by
+// weekday name. A 'dates' section is approximated by whichever weekday each
+// of its occurrences actually falls on, without implying it's weekly.
+function genericDayEntries(picks, day) {
+  return picks.flatMap(p => {
+    if (p.section.scheduleType === 'dates') {
+      return (p.section.occurrences || [])
+        .filter(o => dayOfWeekFromISODate(o.date) === day)
+        .map(o => ({ start: timeToMinutes(o.start), end: timeToMinutes(o.end), startStr: o.start, endStr: o.end, course: p.course, location: p.section.location }));
+    }
+    if (!(p.section.days || []).includes(day)) return [];
+    return [{ start: timeToMinutes(p.section.start), end: timeToMinutes(p.section.end), startStr: p.section.start, endStr: p.section.end, course: p.course, location: p.section.location }];
+  });
 }
 
 function renderCalendar(picks) {
@@ -358,8 +435,8 @@ function renderCalendar(picks) {
   const dayColumns = allDates.map(d => {
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
     const isoD = isoDateStr(d);
-    const blocks = picks
-      .flatMap(p => occurrenceTimesForDate(p.section, isoD, dayName).map(t => calendarBlockHtml(p.course, t, p.section.location, minStart, pxPerMin)))
+    const blocks = layoutDayBlocks(dayEntriesFor(picks, isoD, dayName))
+      .map(e => calendarBlockHtml(e, minStart, pxPerMin))
       .join('');
     return `<div class="cal-day-col" data-date="${isoD}">${blocks}</div>`;
   }).join('');
@@ -397,16 +474,7 @@ function renderGenericWeekCalendar(picks) {
   }
 
   const dayColumns = days.map(day => {
-    const blocks = picks.flatMap(p => {
-      if (p.section.scheduleType === 'dates') {
-        // No real dates to anchor to here — approximate by the weekday each
-        // occurrence actually falls on, without implying it's weekly.
-        return (p.section.occurrences || [])
-          .filter(o => dayOfWeekFromISODate(o.date) === day)
-          .map(o => calendarBlockHtml(p.course, o, p.section.location, minStart, pxPerMin));
-      }
-      return (p.section.days || []).includes(day) ? [calendarBlockHtml(p.course, p.section, p.section.location, minStart, pxPerMin)] : [];
-    }).join('');
+    const blocks = layoutDayBlocks(genericDayEntries(picks, day)).map(e => calendarBlockHtml(e, minStart, pxPerMin)).join('');
     return `<div class="cal-day-col" data-day="${day}">${blocks}</div>`;
   }).join('');
 
@@ -421,6 +489,107 @@ function renderGenericWeekCalendar(picks) {
         <div class="cal-grid" style="height:${height}px;background-size:100% ${ROW_HEIGHT}px, 100% ${ROW_HEIGHT * 2}px;grid-template-columns:repeat(${days.length},1fr)">${dayColumns}</div>
       </div>
     </div>`;
+}
+
+// ---------- Print view ----------
+//
+// The on-screen semester view is one continuous horizontally-scrolling
+// strip, which doesn't paginate sensibly. Printing instead builds a
+// separate, print-only DOM: a cover page listing every course currently
+// shown on the calendar, then one real page per week, each a normal
+// single-week grid (reusing the same block-layout/conflict logic as the
+// live calendar). Only #print-view is visible in print media; see the
+// @media print rules in style.css.
+
+const PRINT_ROW_HEIGHT = 18; // px per 30-minute slot — denser than on-screen so a full day fits one page
+
+function printWeekPageHtml(dates, picks, minStart, maxEnd, heading) {
+  const numSlots = (maxEnd - minStart) / SLOT_MINUTES;
+  const pxPerMin = PRINT_ROW_HEIGHT / SLOT_MINUTES;
+  const height = numSlots * PRINT_ROW_HEIGHT;
+
+  const gutterCells = [];
+  for (let t = minStart; t <= maxEnd; t += 60) {
+    const top = (t - minStart) * pxPerMin;
+    gutterCells.push(`<div class="hour-label" style="top:${top}px">${formatMinutes(t)}</div>`);
+  }
+
+  const dayHeaderCells = dates.map(d => {
+    if (typeof d === 'string') return `<div class="cal-day-header"><span class="dow">${d}</span></div>`;
+    const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
+    return `<div class="cal-day-header"><span class="dow">${dayName}</span><span class="date-num">${formatShortDate(d)}</span></div>`;
+  }).join('');
+
+  const dayColumns = dates.map(d => {
+    const isDate = typeof d !== 'string';
+    const entries = isDate
+      ? dayEntriesFor(picks, isoDateStr(d), DAY_ORDER[(d.getDay() + 6) % 7])
+      : genericDayEntries(picks, d);
+    const blocks = layoutDayBlocks(entries).map(e => calendarBlockHtml(e, minStart, pxPerMin)).join('');
+    return `<div class="cal-day-col">${blocks}</div>`;
+  }).join('');
+
+  const colTemplate = `56px repeat(${dates.length}, 1fr)`;
+  return `<section class="print-week-page">
+    <h2>${escapeHtml(heading)}</h2>
+    <div class="cal-header-row" style="grid-template-columns:${colTemplate}">
+      <div class="cal-gutter-header"></div>
+      ${dayHeaderCells}
+    </div>
+    <div class="cal-body" style="height:${height}px;grid-template-columns:${colTemplate}">
+      <div class="cal-gutter" style="height:${height}px">${gutterCells.join('')}</div>
+      <div class="cal-grid" style="height:${height}px;background-size:100% ${PRINT_ROW_HEIGHT}px, 100% ${PRINT_ROW_HEIGHT * 2}px;grid-template-columns:repeat(${dates.length},1fr)">${dayColumns}</div>
+    </div>
+  </section>`;
+}
+
+function renderPrintView() {
+  const container = el('#print-view');
+  if (!container) return;
+  const picks = currentDisplayPicks();
+
+  const courses = [];
+  const seen = new Set();
+  for (const p of picks) {
+    if (seen.has(p.course.id)) continue;
+    seen.add(p.course.id);
+    courses.push(p.course);
+  }
+
+  const courseRows = courses.map(c => {
+    const categories = c.categoryIds.map(id => categoryById(id)?.name).filter(Boolean).join(', ');
+    const shownSections = picks.filter(p => p.course.id === c.id).map(p => `${p.section.label || 'Section'} (${sectionSummaryText(p.section)})`).join('; ');
+    return `<tr>
+      <td>${escapeHtml(c.code || '')}</td>
+      <td>${escapeHtml(c.name)}</td>
+      <td>${escapeHtml(categories)}</td>
+      <td>${escapeHtml(c.instructor || '')}</td>
+      <td>${escapeHtml(shownSections)}</td>
+    </tr>`;
+  }).join('');
+
+  const coverHtml = `
+    <section class="print-cover">
+      <h1>Selected Schedule</h1>
+      <p>${courses.length} course${courses.length === 1 ? '' : 's'} &middot; printed ${formatShortDate(new Date())}</p>
+      <table class="print-course-table">
+        <thead><tr><th>Code</th><th>Course</th><th>Category</th><th>Instructor</th><th>Section(s) shown</th></tr></thead>
+        <tbody>${courseRows || '<tr><td colspan="5">No courses currently shown.</td></tr>'}</tbody>
+      </table>
+    </section>`;
+
+  const { minStart, maxEnd } = computeTimeRange(picks);
+  const weeks = semesterWeeks();
+  let weeksHtml;
+  if (weeks && weeks.length) {
+    weeksHtml = weeks.map(w =>
+      printWeekPageHtml(w.dates, picks, minStart, maxEnd, `Week of ${formatShortDate(w.weekStart)} – ${formatShortDate(w.weekEnd)}`)
+    ).join('');
+  } else {
+    weeksHtml = printWeekPageHtml(calendarDays(), picks, minStart, maxEnd, 'Weekly schedule (no semester date range set)');
+  }
+
+  container.innerHTML = coverHtml + weeksHtml;
 }
 
 // ---------- Conflict banner ----------
@@ -1228,7 +1397,10 @@ function init() {
     e.target.value = '';
   });
 
-  el('#btn-print').addEventListener('click', () => window.print());
+  el('#btn-print').addEventListener('click', () => {
+    renderPrintView();
+    window.print();
+  });
 
   el('#btn-clear-all').addEventListener('click', () => {
     if (!confirm('This deletes all courses and settings. Continue?')) return;

@@ -91,7 +91,14 @@ course) and get a feel for the tool.
    idle time between classes, earliest finish, or latest start). **Preview**
    shows a combination on the calendar without saving it; **Pin to calendar**
    keeps it as your selected schedule.
-6. **Print schedule** prints just the calendar view.
+6. **Conflicts are visible on the calendar itself**: overlapping blocks sit
+   side by side (like a real calendar app) instead of silently stacking on
+   top of each other, each gets a red outline and a small ⚠, and hovering
+   one shows exactly which course(s) it conflicts with.
+7. **Print schedule** builds a dedicated print layout — a cover page listing
+   every course currently shown on the calendar (code, category, instructor,
+   which section), followed by one real page per week of your configured
+   semester range, each a normal single-week grid.
 
 The calendar is a compact time-grid in the style of When2Meet — sticky
 headers, a fixed time gutter, fine hour/half-hour gridlines, color-coded

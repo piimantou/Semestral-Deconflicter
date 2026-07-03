@@ -293,6 +293,16 @@ h1, h2, h3 { margin: 0 0 8px; }
 }
 
 .cal-grid {
+  /* .cal-body has N+1 columns (gutter + N day tracks) but only 2 direct
+     children (.cal-gutter, .cal-grid) — without an explicit span,
+     .cal-grid auto-places into just the single track after the gutter,
+     and its own nested day-column grid then gets squeezed into that one
+     track's width instead of the remaining N tracks. The semester view
+     accidentally masked this because its minmax(Npx, 1fr) day-column
+     floor forces the container to overflow-grow to fit; plain 1fr tracks
+     (generic week view, print) have no such floor and render broken
+     without this. */
+  grid-column: 2 / -1;
   position: relative;
   display: grid;
   background-image:
@@ -308,9 +318,11 @@ h1, h2, h3 { margin: 0 0 8px; }
 }
 .cal-day-col:hover { background-color: color-mix(in srgb, var(--accent) 6%, transparent); }
 .cal-block {
+  /* left/width are set inline per block by layoutDayBlocks() so overlapping
+     blocks sit side by side instead of stacking invisibly on top of each
+     other; only the vertical (top/height) and horizontal positioning is
+     computed in JS, everything else stays here. */
   position: absolute;
-  left: 3px;
-  right: 3px;
   border-radius: 5px;
   color: white;
   font-size: 0.72rem;
@@ -319,7 +331,11 @@ h1, h2, h3 { margin: 0 0 8px; }
   box-shadow: 0 1px 3px rgba(0,0,0,0.35);
   transition: transform 0.08s ease;
 }
-.cal-block:hover { transform: scale(1.015); z-index: 3; }
+.cal-block:hover { transform: scale(1.03); z-index: 3; }
+.cal-block-conflict {
+  box-shadow: 0 0 0 2px var(--danger), 0 1px 3px rgba(0,0,0,0.35);
+}
+.cal-conflict-badge { font-size: 0.75em; }
 .cal-block-title { font-weight: 700; }
 .cal-block-meta { opacity: 0.9; font-size: 0.68rem; }
 
@@ -437,8 +453,39 @@ input, select {
 .category-row-reorder .btn { padding: 2px 7px; line-height: 1; }
 .category-row-reorder .btn:disabled { opacity: 0.3; cursor: default; }
 
+/* Print output is a separate DOM (#print-view), built fresh by
+   renderPrintView() right before window.print() — the live app's
+   horizontally-scrolling multi-week strip doesn't paginate sensibly, so
+   print gets its own cover page + one real page per week instead. */
+#print-view { display: none; }
+
 @media print {
-  .topbar, .panel-courses, .panel-electives, #conflict-banner { display: none !important; }
-  .layout { grid-template-columns: 1fr; padding: 0; }
-  .panel-calendar { border: none; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body > *:not(#print-view) { display: none !important; }
+  #print-view { display: block; color: #000; background: #fff; }
+
+  .print-cover { padding: 20px; break-after: page; page-break-after: always; }
+  .print-cover h1 { margin-bottom: 2px; }
+  .print-cover > p { color: #444; margin-bottom: 14px; }
+  .print-course-table { width: 100%; border-collapse: collapse; }
+  .print-course-table th, .print-course-table td {
+    border: 1px solid #999;
+    padding: 5px 8px;
+    text-align: left;
+    font-size: 0.8rem;
+    vertical-align: top;
+  }
+  .print-course-table th { background: #eee; }
+
+  .print-week-page { padding: 14px; break-after: page; page-break-after: always; }
+  .print-week-page:last-child { break-after: auto; page-break-after: auto; }
+  .print-week-page h2 { font-size: 1rem; margin-bottom: 8px; }
+  .print-week-page .cal-header-row { position: static; background: none; }
+  .print-week-page .cal-day-header { font-size: 0.62rem; padding: 3px 0; border-color: #ccc; }
+  .print-week-page .cal-gutter-header { border-color: #ccc; }
+  .print-week-page .hour-label { font-size: 0.58rem; }
+  .print-week-page .cal-day-col { border-color: #ccc; }
+  .print-week-page .cal-block { font-size: 0.6rem; padding: 2px 4px; box-shadow: none; }
+  .print-week-page .cal-block-meta { font-size: 0.54rem; }
+  .print-week-page .cal-block-conflict { box-shadow: 0 0 0 1.5px #c00; }
 }
